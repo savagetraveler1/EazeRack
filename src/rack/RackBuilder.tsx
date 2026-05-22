@@ -644,6 +644,7 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
   const [rackDescription, setRackDescription] = useState('');
   const [technicianName, setTechnicianName] = useState('');
   const [rackIdentity, setRackIdentity] = useState<RackIdentity>(EMPTY_RACK_IDENTITY);
+  const [rackIdentityPromptDraft, setRackIdentityPromptDraft] = useState<RackIdentity>(EMPTY_RACK_IDENTITY);
   const [placedBlocks, setPlacedBlocks] = useState<PlacedBlock[]>([]);
   const [activeBlockId, setActiveBlockId] = useState<number | null>(null);
   const [draggingBlockSize, setDraggingBlockSize] = useState<number | null>(null);
@@ -2114,6 +2115,24 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
     rackIdentity.rackLocation.trim() !== '';
 
   const showRackInfoPrompt = hydrated && !isRackIdentityComplete(rackIdentity);
+  const canSaveRackIdentityPrompt = isRackIdentityComplete(rackIdentityPromptDraft);
+
+  useEffect(() => {
+    if (!showRackInfoPrompt) {
+      return;
+    }
+    setRackIdentityPromptDraft(rackIdentity);
+  }, [showRackInfoPrompt, rackIdentity]);
+
+  const handleRackIdentityPromptSave = () => {
+    if (!canSaveRackIdentityPrompt) {
+      return;
+    }
+    setRackIdentity({
+      rackLocation: rackIdentityPromptDraft.rackLocation,
+      rackNumber: rackIdentityPromptDraft.rackNumber,
+    });
+  };
 
   const usedDeviceTypesInRack = new Set(placedBlocks.map((b) => b.deviceType));
   const pdfLegendDeviceTypes =
@@ -2235,7 +2254,7 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
               />
             </label>
             <label className="form-field rack-identity-field" htmlFor="rack-identity-rack-number">
-              <span>Rack number</span>
+                <span>Rack Number / Name</span>
               <input
                 id="rack-identity-rack-number"
                 type="text"
@@ -2243,7 +2262,7 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
                 onChange={(event) =>
                   setRackIdentity((prev) => ({ ...prev, rackNumber: event.target.value }))
                 }
-                placeholder="e.g. 3, 1-7, 2-5"
+                placeholder="e.g. Rack 3, IDF-A, Closet 2, MDF-1"
                 autoComplete="off"
               />
             </label>
@@ -2317,9 +2336,8 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
               Rack identification required
             </h2>
             <p id="rack-info-prompt-desc" className="rack-info-prompt-desc">
-              Enter rack location and rack number for this rack. This dialog closes when both are
-              filled. Project name and technician are separate and stay available in the panel after
-              this step.
+              Enter a rack location and rack number or name, then save. Project name and technician
+              are separate and stay available in the panel after this step.
             </p>
             <div className="details-modal-body">
               <div className="rack-identity-fields">
@@ -2328,9 +2346,9 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
                   <input
                     id="rack-info-prompt-location"
                     type="text"
-                    value={rackIdentity.rackLocation}
+                    value={rackIdentityPromptDraft.rackLocation}
                     onChange={(event) =>
-                      setRackIdentity((prev) => ({ ...prev, rackLocation: event.target.value }))
+                      setRackIdentityPromptDraft((prev) => ({ ...prev, rackLocation: event.target.value }))
                     }
                     placeholder="e.g. IDF B, Room 227, Closet A"
                     autoComplete="off"
@@ -2338,19 +2356,29 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
                   />
                 </label>
                 <label className="form-field rack-identity-field" htmlFor="rack-info-prompt-number">
-                  <span>Rack number</span>
+                  <span>Rack Number / Name</span>
                   <input
                     id="rack-info-prompt-number"
                     type="text"
-                    value={rackIdentity.rackNumber}
+                    value={rackIdentityPromptDraft.rackNumber}
                     onChange={(event) =>
-                      setRackIdentity((prev) => ({ ...prev, rackNumber: event.target.value }))
+                      setRackIdentityPromptDraft((prev) => ({ ...prev, rackNumber: event.target.value }))
                     }
-                    placeholder="e.g. 3, 1-7, 2-5"
+                    placeholder="e.g. Rack 3, IDF-A, Closet 2, MDF-1"
                     autoComplete="off"
                   />
                 </label>
               </div>
+            </div>
+            <div className="details-modal-actions">
+              <button
+                type="button"
+                className="details-modal-btn details-modal-btn-primary"
+                onClick={handleRackIdentityPromptSave}
+                disabled={!canSaveRackIdentityPrompt}
+              >
+                Save
+              </button>
             </div>
           </div>
         </div>

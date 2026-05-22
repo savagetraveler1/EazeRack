@@ -926,6 +926,11 @@ body {
   border-color: #111827;
 }
 
+.details-modal-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 /* Required rack ID overlay — above block details modal so it blocks first-time / post–clear rack setup */
 .rack-info-prompt-backdrop {
   z-index: 10001;
