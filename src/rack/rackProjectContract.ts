@@ -5,12 +5,23 @@
 
 export type RackDeviceType =
   | 'Switch'
-  | 'Server'
-  | 'Firewall'
-  | 'UPS'
   | 'Patch Panel'
-  | 'Wire Manager'
+  | 'PDU'
+  | 'UPS'
   | 'Router'
+  | 'Firewall'
+  | 'Server'
+  | 'Wire Manager'
+  | 'Fiber Shelf'
+  | 'LIU'
+  | 'Shelf'
+  | 'Blank Panel'
+  | 'KVM'
+  | 'NVR'
+  | 'Amplifier'
+  | 'Paging Controller'
+  | 'Custom Device'
+  /** Legacy persisted projects may still contain the old custom label. */
   | 'Custom';
 
 /**

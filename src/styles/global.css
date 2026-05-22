@@ -766,6 +766,81 @@ body {
   background: #ffffff;
 }
 
+.device-type-field {
+  position: relative;
+}
+
+.device-type-selector-trigger {
+  width: 100%;
+  min-height: 39px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font: inherit;
+  color: #111827;
+  background: #ffffff;
+  cursor: pointer;
+}
+
+.device-type-selector-trigger span {
+  font-size: inherit;
+  font-weight: 400;
+}
+
+.device-type-selector-caret {
+  flex: 0 0 auto;
+  color: #64748b;
+  font-size: 0.75rem !important;
+  line-height: 1;
+}
+
+.device-type-selector-list {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  max-height: min(300px, 45vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 4px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.18);
+}
+
+.device-type-selector-option {
+  width: 100%;
+  min-height: 38px;
+  display: block;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 6px;
+  font: inherit;
+  text-align: left;
+  color: #111827;
+  background: transparent;
+  cursor: pointer;
+}
+
+.device-type-selector-option:hover,
+.device-type-selector-option:focus {
+  background: #eff6ff;
+  outline: none;
+}
+
+.device-type-selector-option-selected {
+  color: #1d4ed8;
+  background: #dbeafe;
+  font-weight: 600;
+}
+
 .form-field input {
   width: 100%;
   padding: 8px 10px;
@@ -849,6 +924,18 @@ body {
   background: #111827;
   color: #ffffff;
   border-color: #111827;
+}
+
+/* Required rack ID overlay — above block details modal so it blocks first-time / post–clear rack setup */
+.rack-info-prompt-backdrop {
+  z-index: 10001;
+}
+
+.rack-info-prompt-desc {
+  margin: 0 0 16px;
+  font-size: 0.875rem;
+  line-height: 1.45;
+  color: #64748b;
 }
 
 @media (max-width: 900px) {
@@ -939,6 +1026,13 @@ body {
     inset 0 1px 0 rgba(255, 255, 255, 0.5),
     0 0 0 2px rgba(37, 99, 235, 0.45),
     0 0 0 1px rgba(17, 24, 39, 0.08);
+}
+
+.sidebar-section-mobile-rack-hint .mobile-rack-placement-hint {
+  margin: 0;
+  font-size: 0.875rem;
+  line-height: 1.45;
+  color: #374151;
 }
 
 /* Mobile tap-to-place mode */
@@ -1080,6 +1174,10 @@ body {
   border-bottom: none;
 }
 
+.rack-unit.rack-unit--mobile-touch {
+  touch-action: pan-y;
+}
+
 .rack-unit-label {
   flex: 0 0 var(--rack-label-width);
   min-width: var(--rack-label-width);
@@ -1196,6 +1294,13 @@ body {
   box-shadow: none;
 }
 
+/* Mobile: finger-drag span preview on empty rack (primary height selection) */
+.mobile-empty-drag-preview.placement-tap-preview {
+  opacity: 0.72;
+  border: 2px solid rgba(5, 150, 105, 0.55);
+  background: rgba(16, 185, 129, 0.18);
+}
+
 .palette-floating-ghost {
   position: fixed;
   z-index: 9999;
@@ -1260,74 +1365,154 @@ body {
   opacity: 0;
 }
 
-/* Device-specific block skins — locked palette; live = full depth, PDF/legend = print-quiet */
-.placed-block[data-device-type='Switch'] {
-  background:
-    repeating-linear-gradient(
-      to bottom,
-      transparent 0 7px,
-      rgba(255, 255, 255, 0.07) 7px 8px
-    ),
-    linear-gradient(180deg, #2dbfb0 0%, #14b8a6 48%, #0c7569 100%);
-  border-color: rgba(8, 91, 84, 0.92);
-  border-radius: 4px;
-  box-shadow:
-    0 1px 3px rgba(15, 23, 42, 0.14),
-    inset 0 1px 0 rgba(255, 255, 255, 0.22),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.12);
-}
-
-/* PDF / legend: single 2-stop gradients, saturated hues (no stripes or layered BG) */
+/* Device-specific block skins: exact base palette with shared glossy rack treatment. */
+.placed-block[data-device-type='Switch'],
 .pdf-placed-block[data-device-type='Switch'],
 .pdf-legend-swatch[data-device-type='Switch'] {
-  background: linear-gradient(180deg, #2dd4c8 0%, #0f766e 100%);
-  border-color: #0d5c56;
-  border-radius: 4px;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12);
+  --device-primary: #2FA7A0;
+  --device-dark-edge: #1E6F6A;
 }
 
-.placed-block[data-device-type='Server'] {
-  background:
-    repeating-linear-gradient(
-      to bottom,
-      transparent 0 6px,
-      rgba(255, 255, 255, 0.04) 6px 7px
-    ),
-    linear-gradient(180deg, #2d4a9e 0%, #1e3a8a 42%, #162e6e 72%, #0f214f 100%);
-  border-color: rgba(10, 28, 72, 0.96);
-  border-radius: 4px;
-  box-shadow:
-    0 2px 8px rgba(15, 23, 42, 0.28),
-    0 1px 2px rgba(0, 0, 0, 0.12),
-    inset 0 1px 0 rgba(255, 255, 255, 0.14),
-    inset 0 -2px 6px rgba(0, 0, 0, 0.22);
+.placed-block[data-device-type='Patch Panel'],
+.pdf-placed-block[data-device-type='Patch Panel'],
+.pdf-legend-swatch[data-device-type='Patch Panel'] {
+  --device-primary: #D9DDE3;
+  --device-dark-edge: #AEB5BF;
 }
 
-.pdf-placed-block[data-device-type='Server'],
-.pdf-legend-swatch[data-device-type='Server'] {
-  background: linear-gradient(180deg, #3d62c4 0%, #1e3a8a 100%);
-  border-color: #172554;
-  border-radius: 4px;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.14);
+.placed-block[data-device-type='PDU'],
+.pdf-placed-block[data-device-type='PDU'],
+.pdf-legend-swatch[data-device-type='PDU'] {
+  --device-primary: #1F2A44;
+  --device-dark-edge: #111827;
 }
 
-.placed-block[data-device-type='Firewall'] {
-  background: linear-gradient(180deg, #c32727 0%, #b91c1c 45%, #7f1414 100%);
-  border-color: rgba(60, 10, 10, 0.95);
-  border-radius: 4px;
-  box-shadow:
-    0 2px 8px rgba(69, 10, 10, 0.22),
-    0 1px 2px rgba(15, 23, 42, 0.12),
-    inset 0 1px 0 rgba(255, 255, 255, 0.12),
-    inset 0 -2px 5px rgba(0, 0, 0, 0.2);
+.placed-block[data-device-type='UPS'],
+.pdf-placed-block[data-device-type='UPS'],
+.pdf-legend-swatch[data-device-type='UPS'] {
+  --device-primary: #E6A22B;
+  --device-dark-edge: #A66B00;
 }
 
+.placed-block[data-device-type='Router'],
+.pdf-placed-block[data-device-type='Router'],
+.pdf-legend-swatch[data-device-type='Router'] {
+  --device-primary: #3B82F6;
+  --device-dark-edge: #1D4ED8;
+}
+
+.placed-block[data-device-type='Firewall'],
 .pdf-placed-block[data-device-type='Firewall'],
 .pdf-legend-swatch[data-device-type='Firewall'] {
-  background: linear-gradient(180deg, #ef4444 0%, #b91c1c 100%);
-  border-color: #991b1b;
+  --device-primary: #B91C1C;
+  --device-dark-edge: #7F1D1D;
+}
+
+.placed-block[data-device-type='Server'],
+.pdf-placed-block[data-device-type='Server'],
+.pdf-legend-swatch[data-device-type='Server'] {
+  --device-primary: #1E40AF;
+  --device-dark-edge: #172554;
+}
+
+.placed-block[data-device-type='Wire Manager'],
+.pdf-placed-block[data-device-type='Wire Manager'],
+.pdf-legend-swatch[data-device-type='Wire Manager'] {
+  --device-primary: #B8C0CC;
+  --device-dark-edge: #7C8796;
+}
+
+.placed-block[data-device-type='Fiber Shelf'],
+.pdf-placed-block[data-device-type='Fiber Shelf'],
+.pdf-legend-swatch[data-device-type='Fiber Shelf'] {
+  --device-primary: #7C3AED;
+  --device-dark-edge: #4C1D95;
+}
+
+.placed-block[data-device-type='LIU'],
+.pdf-placed-block[data-device-type='LIU'],
+.pdf-legend-swatch[data-device-type='LIU'] {
+  --device-primary: #9D6BFF;
+  --device-dark-edge: #6D28D9;
+}
+
+.placed-block[data-device-type='Shelf'],
+.pdf-placed-block[data-device-type='Shelf'],
+.pdf-legend-swatch[data-device-type='Shelf'] {
+  --device-primary: #9A6B32;
+  --device-dark-edge: #6B4620;
+}
+
+.placed-block[data-device-type='Blank Panel'],
+.pdf-placed-block[data-device-type='Blank Panel'],
+.pdf-legend-swatch[data-device-type='Blank Panel'] {
+  --device-primary: #64748B;
+  --device-dark-edge: #334155;
+}
+
+.placed-block[data-device-type='KVM'],
+.pdf-placed-block[data-device-type='KVM'],
+.pdf-legend-swatch[data-device-type='KVM'] {
+  --device-primary: #0891B2;
+  --device-dark-edge: #155E75;
+}
+
+.placed-block[data-device-type='NVR'],
+.pdf-placed-block[data-device-type='NVR'],
+.pdf-legend-swatch[data-device-type='NVR'] {
+  --device-primary: #7F1D3A;
+  --device-dark-edge: #4A1022;
+}
+
+.placed-block[data-device-type='Amplifier'],
+.pdf-placed-block[data-device-type='Amplifier'],
+.pdf-legend-swatch[data-device-type='Amplifier'] {
+  --device-primary: #2E9E45;
+  --device-dark-edge: #166534;
+}
+
+.placed-block[data-device-type='Paging Controller'],
+.pdf-placed-block[data-device-type='Paging Controller'],
+.pdf-legend-swatch[data-device-type='Paging Controller'] {
+  --device-primary: #D4A700;
+  --device-dark-edge: #8B6B00;
+}
+
+.placed-block[data-device-type='Custom'],
+.pdf-placed-block[data-device-type='Custom'],
+.pdf-legend-swatch[data-device-type='Custom'],
+.placed-block[data-device-type='Custom Device'],
+.pdf-placed-block[data-device-type='Custom Device'],
+.pdf-legend-swatch[data-device-type='Custom Device'] {
+  --device-primary: #4B5563;
+  --device-dark-edge: #1F2937;
+}
+
+.placed-block[data-device-type='Switch'],
+.placed-block[data-device-type='PDU'],
+.placed-block[data-device-type='UPS'],
+.placed-block[data-device-type='Router'],
+.placed-block[data-device-type='Firewall'],
+.placed-block[data-device-type='Server'],
+.placed-block[data-device-type='Fiber Shelf'],
+.placed-block[data-device-type='LIU'],
+.placed-block[data-device-type='Shelf'],
+.placed-block[data-device-type='Blank Panel'],
+.placed-block[data-device-type='KVM'],
+.placed-block[data-device-type='NVR'],
+.placed-block[data-device-type='Amplifier'],
+.placed-block[data-device-type='Paging Controller'],
+.placed-block[data-device-type='Custom'],
+.placed-block[data-device-type='Custom Device'] {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.16) 0%, transparent 42%),
+    linear-gradient(180deg, var(--device-primary) 0%, var(--device-primary) 48%, var(--device-dark-edge) 100%);
+  border-color: var(--device-dark-edge);
   border-radius: 4px;
-  box-shadow: 0 1px 2px rgba(69, 10, 10, 0.2);
+  box-shadow:
+    0 1px 4px rgba(15, 23, 42, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.14);
 }
 
 .placed-block[data-device-type='Patch Panel'] {
@@ -1335,15 +1520,16 @@ body {
     repeating-linear-gradient(
       to bottom,
       transparent 0 4px,
-      rgba(15, 23, 42, 0.04) 4px 5px
+      rgba(15, 23, 42, 0.035) 4px 5px
     ),
     repeating-linear-gradient(
       to right,
       transparent 0 4px,
-      rgba(15, 23, 42, 0.035) 4px 5px
+      rgba(15, 23, 42, 0.03) 4px 5px
     ),
-    linear-gradient(180deg, #e8eaef 0%, #d1d5db 45%, #b8bec8 100%);
-  border: 1px solid rgba(120, 128, 140, 0.85);
+    linear-gradient(180deg, rgba(255, 255, 255, 0.42) 0%, transparent 42%),
+    linear-gradient(180deg, var(--device-primary) 0%, var(--device-primary) 48%, var(--device-dark-edge) 100%);
+  border: 1px solid var(--device-dark-edge);
   border-radius: 4px;
   box-shadow:
     0 1px 2px rgba(15, 23, 42, 0.08),
@@ -1351,15 +1537,7 @@ body {
     inset 0 -1px 0 rgba(15, 23, 42, 0.06);
 }
 
-.pdf-placed-block[data-device-type='Patch Panel'],
-.pdf-legend-swatch[data-device-type='Patch Panel'] {
-  background: linear-gradient(180deg, #f1f5f9 0%, #cbd5e1 100%);
-  border: 1px solid #94a3b8;
-  border-radius: 4px;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
-}
-
-/* Wire manager — neutral, slightly darker than patch panel */
+/* Wire manager: neutral, slightly darker than patch panel. */
 .placed-block[data-device-type='Wire Manager'] {
   background:
     repeating-linear-gradient(
@@ -1367,8 +1545,9 @@ body {
       transparent 0 6px,
       rgba(15, 23, 42, 0.035) 6px 7px
     ),
-    linear-gradient(180deg, #cbd5e1 0%, #94a3b8 48%, #78909c 100%);
-  border: 1px solid rgba(71, 85, 105, 0.88);
+    linear-gradient(180deg, rgba(255, 255, 255, 0.28) 0%, transparent 42%),
+    linear-gradient(180deg, var(--device-primary) 0%, var(--device-primary) 48%, var(--device-dark-edge) 100%);
+  border: 1px solid var(--device-dark-edge);
   border-radius: 4px;
   box-shadow:
     0 1px 2px rgba(15, 23, 42, 0.1),
@@ -1376,77 +1555,51 @@ body {
     inset 0 -1px 0 rgba(15, 23, 42, 0.08);
 }
 
-.pdf-placed-block[data-device-type='Wire Manager'],
-.pdf-legend-swatch[data-device-type='Wire Manager'] {
-  background: linear-gradient(180deg, #cbd5e1 0%, #64748b 100%);
-  border: 1px solid #475569;
-  border-radius: 4px;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.1);
-}
-
-.placed-block[data-device-type='Router'] {
-  background:
-    repeating-linear-gradient(
-      125deg,
-      transparent 0 5px,
-      rgba(255, 255, 255, 0.045) 5px 6px
-    ),
-    linear-gradient(180deg, #66bb6a 0%, #4caf50 48%, #2e7d32 100%);
-  border-color: rgba(27, 94, 32, 0.92);
-  border-radius: 4px;
-  box-shadow:
-    0 1px 3px rgba(15, 23, 42, 0.13),
-    inset 0 1px 0 rgba(255, 255, 255, 0.2),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.1);
-}
-
-.pdf-placed-block[data-device-type='Router'],
-.pdf-legend-swatch[data-device-type='Router'] {
-  background: linear-gradient(180deg, #4ade80 0%, #166534 100%);
-  border-color: #14532d;
-  border-radius: 4px;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12);
-}
-
-.placed-block[data-device-type='UPS'] {
-  background: linear-gradient(180deg, #f7b84d 0%, #f59e0b 48%, #c57d0a 100%);
-  border-color: rgba(146, 90, 8, 0.9);
-  border-radius: 4px;
-  box-shadow:
-    0 1px 4px rgba(15, 23, 42, 0.14),
-    inset 0 1px 0 rgba(255, 255, 255, 0.28),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.1);
-}
-
+/* PDF / legend: same palette, flatter export-safe gradient. */
+.pdf-placed-block[data-device-type='Switch'],
+.pdf-legend-swatch[data-device-type='Switch'],
+.pdf-placed-block[data-device-type='Patch Panel'],
+.pdf-legend-swatch[data-device-type='Patch Panel'],
+.pdf-placed-block[data-device-type='PDU'],
+.pdf-legend-swatch[data-device-type='PDU'],
 .pdf-placed-block[data-device-type='UPS'],
-.pdf-legend-swatch[data-device-type='UPS'] {
-  background: linear-gradient(180deg, #fbbf24 0%, #b45309 100%);
-  border-color: #92400e;
-  border-radius: 4px;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12);
-}
-
-.placed-block[data-device-type='Custom'] {
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.06) 0%, transparent 40%),
-    linear-gradient(180deg, #7d7a92 0%, #63606f 50%, #4d4b57 100%);
-  border: 1px solid rgba(55, 54, 64, 0.88);
-  border-radius: 4px;
-  box-shadow:
-    0 1px 2px rgba(15, 23, 42, 0.1),
-    inset 0 1px 0 rgba(255, 255, 255, 0.12),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.08);
-}
-
+.pdf-legend-swatch[data-device-type='UPS'],
+.pdf-placed-block[data-device-type='Router'],
+.pdf-legend-swatch[data-device-type='Router'],
+.pdf-placed-block[data-device-type='Firewall'],
+.pdf-legend-swatch[data-device-type='Firewall'],
+.pdf-placed-block[data-device-type='Server'],
+.pdf-legend-swatch[data-device-type='Server'],
+.pdf-placed-block[data-device-type='Wire Manager'],
+.pdf-legend-swatch[data-device-type='Wire Manager'],
+.pdf-placed-block[data-device-type='Fiber Shelf'],
+.pdf-legend-swatch[data-device-type='Fiber Shelf'],
+.pdf-placed-block[data-device-type='LIU'],
+.pdf-legend-swatch[data-device-type='LIU'],
+.pdf-placed-block[data-device-type='Shelf'],
+.pdf-legend-swatch[data-device-type='Shelf'],
+.pdf-placed-block[data-device-type='Blank Panel'],
+.pdf-legend-swatch[data-device-type='Blank Panel'],
+.pdf-placed-block[data-device-type='KVM'],
+.pdf-legend-swatch[data-device-type='KVM'],
+.pdf-placed-block[data-device-type='NVR'],
+.pdf-legend-swatch[data-device-type='NVR'],
+.pdf-placed-block[data-device-type='Amplifier'],
+.pdf-legend-swatch[data-device-type='Amplifier'],
+.pdf-placed-block[data-device-type='Paging Controller'],
+.pdf-legend-swatch[data-device-type='Paging Controller'],
 .pdf-placed-block[data-device-type='Custom'],
-.pdf-legend-swatch[data-device-type='Custom'] {
-  background: linear-gradient(180deg, #8b879e 0%, #4a4756 100%);
-  border: 1px solid #3f3d48;
+.pdf-legend-swatch[data-device-type='Custom'],
+.pdf-placed-block[data-device-type='Custom Device'],
+.pdf-legend-swatch[data-device-type='Custom Device'] {
+  background: linear-gradient(180deg, var(--device-primary) 0%, var(--device-dark-edge) 100%);
+  border: 1px solid var(--device-dark-edge);
   border-radius: 4px;
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12);
 }
 
-.pdf-legend-swatch[data-device-type='Custom'] {
+.pdf-legend-swatch[data-device-type='Custom'],
+.pdf-legend-swatch[data-device-type='Custom Device'] {
   border-radius: 2px;
 }
 

@@ -3,7 +3,6 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -29,25 +28,43 @@ type PlacedBlock = RackPlacedBlock;
 
 const DEVICE_TYPES: DeviceType[] = [
   'Switch',
-  'Server',
-  'Firewall',
-  'UPS',
   'Patch Panel',
-  'Wire Manager',
+  'PDU',
+  'UPS',
   'Router',
-  'Custom',
+  'Firewall',
+  'Server',
+  'Wire Manager',
+  'Fiber Shelf',
+  'LIU',
+  'Shelf',
+  'Blank Panel',
+  'KVM',
+  'NVR',
+  'Amplifier',
+  'Paging Controller',
+  'Custom Device',
 ];
 
 /** PDF legend: device colors reference (excludes Other/Unknown). */
 const PDF_LEGEND_DEVICE_TYPES: DeviceType[] = [
-  'Router',
   'Switch',
-  'Server',
-  'Firewall',
-  'UPS',
   'Patch Panel',
+  'PDU',
+  'UPS',
+  'Router',
+  'Firewall',
+  'Server',
   'Wire Manager',
-  'Custom',
+  'Fiber Shelf',
+  'LIU',
+  'Shelf',
+  'Blank Panel',
+  'KVM',
+  'NVR',
+  'Amplifier',
+  'Paging Controller',
+  'Custom Device',
 ];
 
 /** Must match `--rack-unit-height` in global.css */
@@ -57,6 +74,21 @@ const RACK_UNIT_PX = 22;
 const MOBILE_PLACED_BLOCK_LONG_PRESS_MS = 450;
 const MOBILE_PLACED_BLOCK_LONG_PRESS_SLOP_PX = 12;
 const MOBILE_PLACED_BLOCK_DOUBLE_TAP_MS = 400;
+
+/** Mobile rack tap: max movement from touch start for a release to count as a tap (not a drag/scroll). */
+const MOBILE_RACK_TAP_MAX_SLOP_PX = 10;
+
+/** Mobile empty-rack selection: hold while mostly still before selecting rack space. */
+const MOBILE_EMPTY_SELECTION_HOLD_MS = 220;
+
+/** Movement before the hold completes means the user is scrolling, not selecting. */
+const MOBILE_EMPTY_SELECTION_HOLD_SLOP_PX = 10;
+
+/** Reject impossibly fast contacts (screen noise / grazing touches). */
+const MOBILE_RACK_TAP_MIN_MS = 70;
+
+/** Reject long presses without drag — not a crisp tap. */
+const MOBILE_RACK_TAP_MAX_MS = 450;
 
 /** Default / quick-select rack height (most common). */
 const DEFAULT_RACK_UNITS = 42;
@@ -121,6 +153,11 @@ function normalizeOptionalDescriptor(value: string): string | null {
     return null;
   }
   return trimmed;
+}
+
+/** Rack identification is complete when both location and rack number are set (trimmed). */
+function isRackIdentityComplete(identity: RackIdentity): boolean {
+  return identity.rackLocation.trim() !== '' && identity.rackNumber.trim() !== '';
 }
 
 /** Single-line label for app + PDF. Omits empty parts; no placeholders. */
@@ -347,12 +384,55 @@ function getPlacementTapPreviewAtClient(
 }
 
 /**
+ * Live span for mobile empty-rack vertical drag: anchor U from pointer-down and finger U from pointer Y.
+ * If the raw span overlaps placed gear, shrink from the moving edge toward the anchor until valid (or none).
+ */
+function computeMobileEmptyDragSpan(
+  anchorU: number,
+  fingerU: number,
+  placedBlocks: PlacedBlock[],
+  rackUnitsU: number,
+): { startUnit: number; size: number } | null {
+  let bottomU = Math.min(anchorU, fingerU);
+  let topU = Math.max(anchorU, fingerU);
+  bottomU = Math.max(1, Math.min(rackUnitsU, bottomU));
+  topU = Math.max(1, Math.min(rackUnitsU, topU));
+  if (bottomU > topU) {
+    return null;
+  }
+  let b = bottomU;
+  let t = topU;
+  while (b <= t) {
+    const size = t - b + 1;
+    const startUnit = t;
+    if (isPlaceValidForNewBlock(startUnit, size, placedBlocks)) {
+      return { startUnit, size };
+    }
+    if (fingerU > anchorU) {
+      t -= 1;
+    } else if (fingerU < anchorU) {
+      b += 1;
+    } else {
+      break;
+    }
+  }
+  return null;
+}
+
+/**
  * If the topmost DOM node under the pointer is inside a placed device, the user is
  * interacting with that block — not empty rack space (avoids slot-row clicks “through” blocks).
  */
 function isPlacedBlockTopHit(clientX: number, clientY: number): boolean {
-  const el = document.elementFromPoint(clientX, clientY);
-  return Boolean(el?.closest('.placed-block'));
+  if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) {
+    return false;
+  }
+  try {
+    const el = document.elementFromPoint(clientX, clientY);
+    return Boolean(el?.closest('.placed-block'));
+  } catch {
+    return false;
+  }
 }
 
 const PROJECT_STORAGE_KEY = 'eazerack_project';
@@ -606,11 +686,13 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
     openPorts: '',
     notes: '',
   });
+  const [deviceTypeSelectorOpen, setDeviceTypeSelectorOpen] = useState(false);
   const [isManualSaving, setIsManualSaving] = useState(false);
   const [saveToastVisible, setSaveToastVisible] = useState(false);
   const [saveToastKey, setSaveToastKey] = useState(0);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const exportMenuRef = useRef<HTMLDivElement>(null);
+  const deviceTypeSelectorRef = useRef<HTMLDivElement>(null);
   const handleDetailsCancelRef = useRef<() => void>(() => {});
   /** True when the current pointer gesture began on the details dialog (e.g. text selection in a field). */
   const detailsModalPointerDownStartedInsideRef = useRef(false);
@@ -620,21 +702,45 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
   const rackGridRef = useRef<HTMLDivElement>(null);
   const rackFrameRef = useRef<HTMLDivElement>(null);
   const rackScrollContainerRef = useRef<HTMLDivElement>(null);
+  const previousRackScrollOverflowRef = useRef<string | null>(null);
   const pdfExportRef = useRef<HTMLDivElement>(null);
   const pdfExportDateRef = useRef<HTMLSpanElement>(null);
   const isMobileLayout = useIsMobileLayout();
-  const [placementModeActive, setPlacementModeActive] = useState(false);
-  const [placementModeSize, setPlacementModeSize] = useState<number | null>(null);
   /** Mobile: job info panel (notes column) expanded vs collapsed; desktop ignores. */
   const [mobileJobInfoExpanded, setMobileJobInfoExpanded] = useState(false);
-  const [placementRackPreview, setPlacementRackPreview] = useState<PlacementTapPreviewResult | null>(null);
+  /** Mobile: temporary pre-placement RU span selection on empty rack; release commits via `placeBlockAt`. */
+  const [mobileEmptyDragPreview, setMobileEmptyDragPreview] = useState<{
+    startUnit: number;
+    size: number;
+  } | null>(null);
   const lastPointerClientRef = useRef<{ x: number; y: number } | null>(null);
   const palettePointerSessionRef = useRef<{ pointerId: number; blockSize: number } | null>(null);
   /** After a move/resize drag, suppress the synthetic click so it does not change selection. */
   const moveSessionDragRef = useRef(false);
   const resizeSessionDragRef = useRef(false);
   const suppressNextPlacedBlockClickRef = useRef(false);
-  const mobilePlacedBlockLongPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const suppressNextEmptyRackClickRef = useRef(false);
+  const mobileEmptyDragSessionRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    startTimeMs: number;
+    maxDistanceSq: number;
+    anchorUnit: number;
+    dragActivated: boolean;
+    hasSizedDrag: boolean;
+    initialTarget: Element;
+  } | null>(null);
+  const mobileEmptyDragPreviewRef = useRef<{ startUnit: number; size: number } | null>(null);
+  const placedBlocksRef = useRef(placedBlocks);
+  placedBlocksRef.current = placedBlocks;
+  const rackUnitsURef = useRef(rackUnitsU);
+  rackUnitsURef.current = rackUnitsU;
+  const sizingHoldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const movingHoldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const currentGestureStateRef = useRef<
+    'IDLE' | 'PENDING_SIZING' | 'PENDING_MOVING' | 'SCROLL' | 'SIZING_ACTIVE' | 'MOVING_ACTIVE'
+  >('IDLE');
   const mobilePlacedBlockLongPressCleanupRef = useRef<(() => void) | null>(null);
   const mobilePlacedBlockLastTapRef = useRef<{ blockId: number; time: number } | null>(null);
   const mobilePlacedBlockDoubleTapClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -724,13 +830,6 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
     [placedBlocks, rackUnitsU],
   );
 
-  const exitPlacementMode = useCallback(() => {
-    setPlacementModeActive(false);
-    setPlacementModeSize(null);
-    setPlacementRackPreview(null);
-    lastPointerClientRef.current = null;
-  }, []);
-
   const placeBlockAt = (startUnit: number, blockSize: number): boolean => {
     if (!isPlaceValidForNewBlock(startUnit, blockSize, placedBlocks)) {
       return false;
@@ -767,6 +866,9 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
     return true;
   };
 
+  const placeBlockAtRef = useRef(placeBlockAt);
+  placeBlockAtRef.current = placeBlockAt;
+
   const tryPlaceNewBlockFromPointer = (clientX: number, clientY: number, blockSize: number): boolean => {
     if (isPlacedBlockTopHit(clientX, clientY)) {
       return false;
@@ -789,12 +891,8 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
     return placeBlockAt(preview.previewStartUnit, blockSize);
   };
 
-  const handleRackPlacementTap = (clientX: number, clientY: number) => {
-    if (!isMobileLayout || !placementModeActive || placementModeSize === null) {
-      return;
-    }
-    tryPlaceNewBlockFromPointer(clientX, clientY, placementModeSize);
-  };
+  const tryPlaceNewBlockFromPointerRef = useRef(tryPlaceNewBlockFromPointer);
+  tryPlaceNewBlockFromPointerRef.current = tryPlaceNewBlockFromPointer;
 
   const handleDesktopRackEmptySlotClick = (clientX: number, clientY: number) => {
     if (isMobileLayout) {
@@ -803,61 +901,317 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
     tryPlaceNewBlockFromPointer(clientX, clientY, selectedBlockSize);
   };
 
-  const updatePlacementRackPreviewFromPointer = useCallback(
-    (clientX: number, clientY: number) => {
-      if (!isMobileLayout || !placementModeActive || placementModeSize === null || !rackGridRef.current) {
+  const setRackScrollLocked = (locked: boolean) => {
+    const el = rackScrollContainerRef.current;
+    if (!el) return;
+
+    if (locked) {
+      if (previousRackScrollOverflowRef.current === null) {
+        previousRackScrollOverflowRef.current = el.style.overflowY || '';
+      }
+      el.style.overflowY = 'hidden';
+    } else {
+      if (previousRackScrollOverflowRef.current !== null) {
+        el.style.overflowY = previousRackScrollOverflowRef.current;
+        previousRackScrollOverflowRef.current = null;
+      } else {
+        el.style.overflowY = '';
+      }
+    }
+  };
+
+  const handleMobileEmptyRackPointerDown = useCallback(
+    (event: PointerEvent) => {
+      if (!isMobileLayout) {
         return;
       }
-      const rect = rackGridRef.current.getBoundingClientRect();
-      setPlacementRackPreview(
-        getPlacementTapPreviewAtClient(
-          clientX,
-          clientY,
-          rect,
-          placementModeSize,
-          placedBlocks,
-          rackUnitsU,
-        ),
-      );
-    },
-    [isMobileLayout, placementModeActive, placementModeSize, placedBlocks, rackUnitsU],
-  );
-
-  useEffect(() => {
-    if (!isMobileLayout || !placementModeActive || placementModeSize === null) {
-      return;
-    }
-    const handlePointer = (event: PointerEvent) => {
-      lastPointerClientRef.current = { x: event.clientX, y: event.clientY };
-      updatePlacementRackPreviewFromPointer(event.clientX, event.clientY);
-    };
-    window.addEventListener('pointermove', handlePointer, { passive: true });
-    window.addEventListener('pointerdown', handlePointer, { passive: true });
-    return () => {
-      window.removeEventListener('pointermove', handlePointer);
-      window.removeEventListener('pointerdown', handlePointer);
-    };
-  }, [isMobileLayout, placementModeActive, placementModeSize, updatePlacementRackPreviewFromPointer]);
-
-  useLayoutEffect(() => {
-    if (!isMobileLayout || !placementModeActive || placementModeSize === null) {
-      return;
-    }
-    const last = lastPointerClientRef.current;
-    if (!last || !rackGridRef.current) {
-      return;
-    }
-    setPlacementRackPreview(
-      getPlacementTapPreviewAtClient(
-        last.x,
-        last.y,
-        rackGridRef.current.getBoundingClientRect(),
-        placementModeSize,
+      if (event.button !== 0) {
+        return;
+      }
+      if (isPlacedBlockTopHit(event.clientX, event.clientY)) {
+        return;
+      }
+      const grid = rackGridRef.current;
+      if (!grid) {
+        return;
+      }
+      const rect = grid.getBoundingClientRect();
+      const preview = getPlacementTapPreviewAtClient(
+        event.clientX,
+        event.clientY,
+        rect,
+        1,
         placedBlocks,
         rackUnitsU,
-      ),
-    );
-  }, [placedBlocks, isMobileLayout, placementModeActive, placementModeSize, rackUnitsU]);
+      );
+      if (!preview || !preview.valid) {
+        return;
+      }
+      mobileEmptyDragSessionRef.current = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        startTimeMs: performance.now(),
+        maxDistanceSq: 0,
+        anchorUnit: preview.previewStartUnit,
+        dragActivated: false,
+        hasSizedDrag: false,
+        initialTarget: event.target as Element,
+      };
+      if (sizingHoldTimerRef.current) {
+        clearTimeout(sizingHoldTimerRef.current);
+        sizingHoldTimerRef.current = null;
+      }
+
+      sizingHoldTimerRef.current = setTimeout(() => {
+        const session = mobileEmptyDragSessionRef.current;
+        if (!session || session.dragActivated) return;
+        const holdSlopSq = MOBILE_EMPTY_SELECTION_HOLD_SLOP_PX * MOBILE_EMPTY_SELECTION_HOLD_SLOP_PX;
+        if (session.maxDistanceSq > holdSlopSq) {
+          mobileEmptyDragSessionRef.current = null;
+          return;
+        }
+        session.dragActivated = true;
+        setRackScrollLocked(true);
+        const initialSelection = { startUnit: session.anchorUnit, size: 1 };
+        mobileEmptyDragPreviewRef.current = initialSelection;
+        setMobileEmptyDragPreview(initialSelection);
+        try {
+          session.initialTarget.setPointerCapture(session.pointerId);
+        } catch {
+          // ignore
+        }
+      }, MOBILE_EMPTY_SELECTION_HOLD_MS);
+    },
+    [isMobileLayout, placedBlocks, rackUnitsU],
+  );
+
+  const updateMobileEmptyRackSelectionFromClient = useCallback(
+    (clientX: number, clientY: number, preventDefault: () => void) => {
+      const session = mobileEmptyDragSessionRef.current;
+      if (!session) {
+        return;
+      }
+      const dx = clientX - session.startX;
+      const dy = clientY - session.startY;
+      session.maxDistanceSq = Math.max(session.maxDistanceSq, dx * dx + dy * dy);
+      if (!session.dragActivated) {
+        const holdSlopSq = MOBILE_EMPTY_SELECTION_HOLD_SLOP_PX * MOBILE_EMPTY_SELECTION_HOLD_SLOP_PX;
+        if (session.maxDistanceSq > holdSlopSq) {
+          if (sizingHoldTimerRef.current) {
+            clearTimeout(sizingHoldTimerRef.current);
+            sizingHoldTimerRef.current = null;
+          }
+          mobileEmptyDragSessionRef.current = null;
+          mobileEmptyDragPreviewRef.current = null;
+          setMobileEmptyDragPreview(null);
+          setRackScrollLocked(false);
+          return;
+        }
+        return;
+      }
+
+      const grid = rackGridRef.current;
+      if (!grid) {
+        if (session.dragActivated || session.hasSizedDrag) {
+          preventDefault();
+        }
+        return;
+      }
+      const rect = grid.getBoundingClientRect();
+      const cy = Math.max(rect.top, Math.min(rect.bottom, clientY));
+      const centerFloat = centerUnitFromRackGridClientY(cy, rect, rackUnitsURef.current, RACK_UNIT_PX);
+      const fingerU = Math.max(1, Math.min(rackUnitsURef.current, Math.round(centerFloat)));
+      const preview = computeMobileEmptyDragSpan(
+        session.anchorUnit,
+        fingerU,
+        placedBlocksRef.current,
+        rackUnitsURef.current,
+      );
+      mobileEmptyDragPreviewRef.current = preview;
+      setMobileEmptyDragPreview(preview);
+      if (preview && (preview.size > 1 || Math.abs(dy) > MOBILE_RACK_TAP_MAX_SLOP_PX)) {
+        session.hasSizedDrag = true;
+      }
+      if (session.dragActivated || session.hasSizedDrag) {
+        preventDefault();
+      }
+    },
+    [],
+  );
+
+  const handleMobileEmptyRackPointerMove = useCallback(
+    (event: PointerEvent) => {
+      const session = mobileEmptyDragSessionRef.current;
+      if (!session || event.pointerId !== session.pointerId) {
+        return;
+      }
+      updateMobileEmptyRackSelectionFromClient(event.clientX, event.clientY, () => event.preventDefault());
+    },
+    [updateMobileEmptyRackSelectionFromClient],
+  );
+
+  const finishMobileEmptyRackSelection = useCallback((clientX: number, clientY: number, pointerId?: number) => {
+    if (sizingHoldTimerRef.current) {
+      clearTimeout(sizingHoldTimerRef.current);
+      sizingHoldTimerRef.current = null;
+    }
+    setRackScrollLocked(false);
+    const session = mobileEmptyDragSessionRef.current;
+    if (!session || (pointerId !== undefined && pointerId !== session.pointerId)) {
+      return;
+    }
+    const previewSnapshot = mobileEmptyDragPreviewRef.current;
+    const tapSlopSq = MOBILE_RACK_TAP_MAX_SLOP_PX * MOBILE_RACK_TAP_MAX_SLOP_PX;
+    const durationMs = performance.now() - session.startTimeMs;
+
+    currentGestureStateRef.current = 'IDLE';
+
+    mobileEmptyDragSessionRef.current = null;
+    mobileEmptyDragPreviewRef.current = null;
+    setMobileEmptyDragPreview(null);
+    suppressNextEmptyRackClickRef.current = true;
+
+    const commitSizedPlacement =
+      session.hasSizedDrag &&
+      previewSnapshot &&
+      (session.dragActivated ||
+        previewSnapshot.size > 1 ||
+        session.maxDistanceSq > tapSlopSq);
+
+    if (
+      commitSizedPlacement &&
+      typeof placeBlockAtRef.current === 'function' &&
+      isPlaceValidForNewBlock(
+        previewSnapshot.startUnit,
+        previewSnapshot.size,
+        placedBlocksRef.current,
+      )
+    ) {
+      placeBlockAtRef.current(previewSnapshot.startUnit, previewSnapshot.size);
+    } else if (
+      !session.dragActivated &&
+      durationMs >= MOBILE_RACK_TAP_MIN_MS &&
+      durationMs <= MOBILE_RACK_TAP_MAX_MS &&
+      session.maxDistanceSq <= tapSlopSq &&
+      !isPlacedBlockTopHit(clientX, clientY)
+    ) {
+      const tryPlace = tryPlaceNewBlockFromPointerRef.current;
+      if (typeof tryPlace === 'function') {
+        void tryPlace(clientX, clientY, 1);
+      }
+    }
+
+    try {
+      const target = session.initialTarget;
+      if (target.hasPointerCapture(session.pointerId)) {
+        target.releasePointerCapture(session.pointerId);
+      }
+    } catch {
+      // Ignore.
+    }
+  }, []);
+
+  const handleMobileEmptyRackPointerEnd = useCallback((event: PointerEvent) => {
+    finishMobileEmptyRackSelection(event.clientX, event.clientY, event.pointerId);
+  }, [finishMobileEmptyRackSelection]);
+
+  const handleMobileEmptyRackPointerCancel = useCallback((event: PointerEvent) => {
+    const session = mobileEmptyDragSessionRef.current;
+    if (session?.dragActivated) {
+      return;
+    }
+    if (sizingHoldTimerRef.current) {
+      clearTimeout(sizingHoldTimerRef.current);
+      sizingHoldTimerRef.current = null;
+    }
+
+    setRackScrollLocked(false);
+    mobileEmptyDragSessionRef.current = null;
+    mobileEmptyDragPreviewRef.current = null;
+    setMobileEmptyDragPreview(null);
+
+    try {
+      const target = session?.initialTarget ?? (event.target as Element);
+      if (target.hasPointerCapture(event.pointerId)) {
+        target.releasePointerCapture(event.pointerId);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const handleMobileEmptyRackTouchMove = useCallback(
+    (event: TouchEvent) => {
+      const session = mobileEmptyDragSessionRef.current;
+      if (!session || event.touches.length === 0) {
+        return;
+      }
+      const touch = event.touches[0];
+      updateMobileEmptyRackSelectionFromClient(touch.clientX, touch.clientY, () => event.preventDefault());
+    },
+    [updateMobileEmptyRackSelectionFromClient],
+  );
+
+  const handleMobileEmptyRackTouchEnd = useCallback(
+    (event: TouchEvent) => {
+      const session = mobileEmptyDragSessionRef.current;
+      if (!session) {
+        return;
+      }
+      const touch = event.changedTouches[0];
+      finishMobileEmptyRackSelection(
+        touch?.clientX ?? session.startX,
+        touch?.clientY ?? session.startY,
+      );
+    },
+    [finishMobileEmptyRackSelection],
+  );
+
+  const handleMobileEmptyRackTouchCancel = useCallback(() => {
+    if (sizingHoldTimerRef.current) {
+      clearTimeout(sizingHoldTimerRef.current);
+      sizingHoldTimerRef.current = null;
+    }
+
+    setRackScrollLocked(false);
+    mobileEmptyDragSessionRef.current = null;
+    mobileEmptyDragPreviewRef.current = null;
+    setMobileEmptyDragPreview(null);
+  }, []);
+
+  useEffect(() => {
+    if (!isMobileLayout) return;
+    const grid = rackGridRef.current;
+    if (!grid) return;
+
+    grid.addEventListener('pointerdown', handleMobileEmptyRackPointerDown, { passive: true });
+    grid.addEventListener('pointermove', handleMobileEmptyRackPointerMove, { passive: false });
+    grid.addEventListener('pointerup', handleMobileEmptyRackPointerEnd);
+    grid.addEventListener('pointercancel', handleMobileEmptyRackPointerCancel);
+    grid.addEventListener('touchmove', handleMobileEmptyRackTouchMove, { passive: false });
+    grid.addEventListener('touchend', handleMobileEmptyRackTouchEnd);
+    grid.addEventListener('touchcancel', handleMobileEmptyRackTouchCancel);
+
+    return () => {
+      grid.removeEventListener('pointerdown', handleMobileEmptyRackPointerDown);
+      grid.removeEventListener('pointermove', handleMobileEmptyRackPointerMove);
+      grid.removeEventListener('pointerup', handleMobileEmptyRackPointerEnd);
+      grid.removeEventListener('pointercancel', handleMobileEmptyRackPointerCancel);
+      grid.removeEventListener('touchmove', handleMobileEmptyRackTouchMove);
+      grid.removeEventListener('touchend', handleMobileEmptyRackTouchEnd);
+      grid.removeEventListener('touchcancel', handleMobileEmptyRackTouchCancel);
+    };
+  }, [
+    isMobileLayout,
+    handleMobileEmptyRackPointerDown,
+    handleMobileEmptyRackPointerMove,
+    handleMobileEmptyRackPointerEnd,
+    handleMobileEmptyRackPointerCancel,
+    handleMobileEmptyRackTouchMove,
+    handleMobileEmptyRackTouchEnd,
+    handleMobileEmptyRackTouchCancel,
+  ]);
 
   const handlePalettePointerDown = (event: ReactPointerEvent<HTMLButtonElement>, size: number) => {
     if (isMobileLayout || event.button !== 0) {
@@ -1100,7 +1454,6 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
     setMoveSession(null);
     setDetailsModal(null);
     setRackHeightMobileExpanded(false);
-    exitPlacementMode();
   };
 
   const handleClearRack = () => {
@@ -1108,13 +1461,14 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
       placedBlocks.length > 0 ||
       rackNotes.trim() !== '' ||
       rackDescription.trim() !== '' ||
-      rackIdentity.rackNumber.trim() !== '';
+      rackIdentity.rackNumber.trim() !== '' ||
+      rackIdentity.rackLocation.trim() !== '';
     if (!hasRackSpecificContent) {
       return;
     }
     if (
       !window.confirm(
-        'Clear rack devices, rack number, notes, and rack description? Project name, location, and technician are kept.',
+        'Clear rack devices, rack identification (location & number), notes, and rack description? Project name and technician are kept.',
       )
     ) {
       return;
@@ -1122,7 +1476,7 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
     setPlacedBlocks([]);
     setRackNotes('');
     setRackDescription('');
-    setRackIdentity((prev) => ({ ...prev, rackNumber: '' }));
+    setRackIdentity(EMPTY_RACK_IDENTITY);
     setActiveBlockId(null);
     setResizeSession(null);
     setMoveSession(null);
@@ -1149,7 +1503,6 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
     setMoveSession(null);
     setDetailsModal(null);
     setRackHeightMobileExpanded(false);
-    exitPlacementMode();
   };
 
   useEffect(() => {
@@ -1234,10 +1587,16 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
 
   useEffect(() => {
     if (!isMobileLayout) {
-      setPlacementModeActive(false);
-      setPlacementModeSize(null);
-      setPlacementRackPreview(null);
       lastPointerClientRef.current = null;
+      if (sizingHoldTimerRef.current) {
+        clearTimeout(sizingHoldTimerRef.current);
+        sizingHoldTimerRef.current = null;
+      }
+      setRackScrollLocked(false);
+      currentGestureStateRef.current = 'IDLE';
+      mobileEmptyDragSessionRef.current = null;
+      mobileEmptyDragPreviewRef.current = null;
+      setMobileEmptyDragPreview(null);
     }
   }, [isMobileLayout]);
 
@@ -1344,9 +1703,15 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
   };
 
   const clearMobilePlacedBlockLongPressSetup = () => {
-    if (mobilePlacedBlockLongPressTimerRef.current !== null) {
-      window.clearTimeout(mobilePlacedBlockLongPressTimerRef.current);
-      mobilePlacedBlockLongPressTimerRef.current = null;
+    if (movingHoldTimerRef.current !== null) {
+      window.clearTimeout(movingHoldTimerRef.current);
+      movingHoldTimerRef.current = null;
+      if (
+        currentGestureStateRef.current === 'PENDING_MOVING' ||
+        currentGestureStateRef.current === 'MOVING_ACTIVE'
+      ) {
+        currentGestureStateRef.current = 'IDLE';
+      }
     }
     mobilePlacedBlockLongPressCleanupRef.current?.();
     mobilePlacedBlockLongPressCleanupRef.current = null;
@@ -1385,10 +1750,15 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
       window.removeEventListener('pointercancel', onEnd);
     };
 
-    mobilePlacedBlockLongPressTimerRef.current = window.setTimeout(() => {
-      mobilePlacedBlockLongPressTimerRef.current = null;
+    currentGestureStateRef.current = 'PENDING_MOVING';
+    movingHoldTimerRef.current = window.setTimeout(() => {
+      movingHoldTimerRef.current = null;
       mobilePlacedBlockLongPressCleanupRef.current?.();
       mobilePlacedBlockLongPressCleanupRef.current = null;
+      if (currentGestureStateRef.current !== 'PENDING_MOVING') {
+        return;
+      }
+      currentGestureStateRef.current = 'MOVING_ACTIVE';
       if (mobilePlacedBlockDoubleTapClearTimerRef.current !== null) {
         window.clearTimeout(mobilePlacedBlockDoubleTapClearTimerRef.current);
         mobilePlacedBlockDoubleTapClearTimerRef.current = null;
@@ -1406,9 +1776,9 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
 
   useEffect(() => {
     return () => {
-      if (mobilePlacedBlockLongPressTimerRef.current !== null) {
-        window.clearTimeout(mobilePlacedBlockLongPressTimerRef.current);
-        mobilePlacedBlockLongPressTimerRef.current = null;
+      if (movingHoldTimerRef.current !== null) {
+        window.clearTimeout(movingHoldTimerRef.current);
+        movingHoldTimerRef.current = null;
       }
       mobilePlacedBlockLongPressCleanupRef.current?.();
       mobilePlacedBlockLongPressCleanupRef.current = null;
@@ -1671,12 +2041,30 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
     }
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        handleDetailsCancelRef.current();
+        if (deviceTypeSelectorOpen) {
+          setDeviceTypeSelectorOpen(false);
+        } else {
+          handleDetailsCancelRef.current();
+        }
       }
     };
     window.addEventListener('keydown', handleEscape);
     return () => window.removeEventListener('keydown', handleEscape);
-  }, [detailsModal]);
+  }, [detailsModal, deviceTypeSelectorOpen]);
+
+  useEffect(() => {
+    if (!deviceTypeSelectorOpen) {
+      return;
+    }
+    const handlePointerDown = (event: PointerEvent) => {
+      const menu = deviceTypeSelectorRef.current;
+      if (menu && !menu.contains(event.target as Node)) {
+        setDeviceTypeSelectorOpen(false);
+      }
+    };
+    window.addEventListener('pointerdown', handlePointerDown);
+    return () => window.removeEventListener('pointerdown', handlePointerDown);
+  }, [deviceTypeSelectorOpen]);
 
   const renderRackUnitsPalette = () => (
     <section className="sidebar-section-rack-units">
@@ -1687,24 +2075,28 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
             key={size}
             type="button"
             draggable={false}
-            className={`block-option${selectedBlockSize === size ? ' block-option-selected' : ''}${draggingBlockSize === size ? ' block-option-dragging' : ''}${isMobileLayout ? ' block-option-tap-place' : ''}${isMobileLayout && placementModeActive && placementModeSize === size ? ' block-option-placement-active' : ''}`}
+            className={`block-option${selectedBlockSize === size ? ' block-option-selected' : ''}${
+              draggingBlockSize === size ? ' block-option-dragging' : ''
+            }`}
             style={{ height: size * RACK_UNIT_PX }}
-            onClick={() => {
-              setSelectedBlockSize(size);
-              if (isMobileLayout) {
-                setPlacementModeActive(true);
-                setPlacementModeSize(size);
-              }
-            }}
+            onClick={() => setSelectedBlockSize(size)}
             onPointerDown={(event) => handlePalettePointerDown(event, size)}
-            aria-pressed={
-              isMobileLayout && placementModeActive ? placementModeSize === size : selectedBlockSize === size
-            }
+            aria-pressed={selectedBlockSize === size}
           >
             {size}U
           </button>
         ))}
       </div>
+    </section>
+  );
+
+  const renderMobileRackPlacementHint = () => (
+    <section className="sidebar-section-rack-units sidebar-section-mobile-rack-hint" aria-label="Rack placement">
+      <h2 id="rack-units-heading">Rack placement</h2>
+      <p className="mobile-rack-placement-hint">
+        Touch empty rack space and drag vertically to select the device height, then release to define the device
+        details. A quick tap still creates a 1U device.
+      </p>
     </section>
   );
 
@@ -1718,7 +2110,10 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
     placedBlocks.length > 0 ||
     rackNotes.trim() !== '' ||
     rackDescription.trim() !== '' ||
-    rackIdentity.rackNumber.trim() !== '';
+    rackIdentity.rackNumber.trim() !== '' ||
+    rackIdentity.rackLocation.trim() !== '';
+
+  const showRackInfoPrompt = hydrated && !isRackIdentityComplete(rackIdentity);
 
   const usedDeviceTypesInRack = new Set(placedBlocks.map((b) => b.deviceType));
   const pdfLegendDeviceTypes =
@@ -1904,6 +2299,62 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
           <h1>EazeRack</h1>
         </header>
       ) : null}
+      {showRackInfoPrompt ? (
+        <div
+          className="details-modal-backdrop rack-info-prompt-backdrop"
+          role="presentation"
+          aria-hidden={false}
+        >
+          <div
+            className="details-modal rack-info-prompt"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="rack-info-prompt-title"
+            aria-describedby="rack-info-prompt-desc"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2 id="rack-info-prompt-title" className="details-modal-title">
+              Rack identification required
+            </h2>
+            <p id="rack-info-prompt-desc" className="rack-info-prompt-desc">
+              Enter rack location and rack number for this rack. This dialog closes when both are
+              filled. Project name and technician are separate and stay available in the panel after
+              this step.
+            </p>
+            <div className="details-modal-body">
+              <div className="rack-identity-fields">
+                <label className="form-field rack-identity-field" htmlFor="rack-info-prompt-location">
+                  <span>Rack location</span>
+                  <input
+                    id="rack-info-prompt-location"
+                    type="text"
+                    value={rackIdentity.rackLocation}
+                    onChange={(event) =>
+                      setRackIdentity((prev) => ({ ...prev, rackLocation: event.target.value }))
+                    }
+                    placeholder="e.g. IDF B, Room 227, Closet A"
+                    autoComplete="off"
+                    autoFocus
+                  />
+                </label>
+                <label className="form-field rack-identity-field" htmlFor="rack-info-prompt-number">
+                  <span>Rack number</span>
+                  <input
+                    id="rack-info-prompt-number"
+                    type="text"
+                    value={rackIdentity.rackNumber}
+                    onChange={(event) =>
+                      setRackIdentity((prev) => ({ ...prev, rackNumber: event.target.value }))
+                    }
+                    placeholder="e.g. 3, 1-7, 2-5"
+                    autoComplete="off"
+                  />
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
       <div className="layout">
         <aside className="sidebar">
           <div className="sidebar-content">
@@ -1977,11 +2428,11 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
                 ) : null}
               </div>
                 </section>
-                {renderRackUnitsPalette()}
+                {isMobileLayout ? renderMobileRackPlacementHint() : renderRackUnitsPalette()}
               </>
             ) : (
               <>
-                {renderRackUnitsPalette()}
+                {isMobileLayout ? renderMobileRackPlacementHint() : renderRackUnitsPalette()}
                 <section className="rack-height-mobile-compact" aria-label="Rack height summary">
                   <div className="rack-height-compact-row">
                     <span className="rack-height-compact-summary">Rack Height: {rackUnitsU}U</span>
@@ -2111,7 +2562,7 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
                   disabled={!canClearRack}
                   title={
                     canClearRack
-                      ? 'Clear devices, rack number, notes, and rack description (keeps project and location)'
+                      ? 'Clear devices, rack identification, notes, and rack description (keeps project name and technician)'
                       : 'Nothing to clear on this rack'
                   }
                 >
@@ -2130,16 +2581,6 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
           </div>
         </aside>
         <main className="workspace">
-          {isMobileLayout && placementModeActive && placementModeSize !== null ? (
-            <div className="palette-placement-banner" role="status" aria-live="polite">
-              <p className="palette-placement-banner-text">
-                Placing {placementModeSize}U — tap rack to place
-              </p>
-              <button type="button" className="palette-placement-cancel" onClick={exitPlacementMode}>
-                Cancel
-              </button>
-            </div>
-          ) : null}
           <div
             className="workspace-rack-and-notes"
             onPointerDown={(event) => {
@@ -2162,15 +2603,10 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
             </div>
           ) : null}
           <div ref={rackScrollContainerRef} className="rack-scroll-region">
-          <div
-            ref={rackFrameRef}
-            className={`rack-frame${isMobileLayout && placementModeActive ? ' rack-frame--placement-mode' : ''}`}
-          >
+          <div ref={rackFrameRef} className="rack-frame">
             <div
               ref={rackGridRef}
-              className={`rack-grid${draggingBlockSize !== null ? ' rack-grid-palette-drag' : ''}${
-                isMobileLayout && placementModeActive ? ' rack-grid-placement-mode' : ''
-              }`}
+              className={`rack-grid${draggingBlockSize !== null ? ' rack-grid-palette-drag' : ''}`}
               aria-label={`Rack grid with ${rackUnitsU}U`}
             >
               {rackUnits.map((unitNumber) => (
@@ -2179,20 +2615,22 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
                   type="button"
                   className={`rack-unit${paletteAnchorHighlightUnit === unitNumber ? ' rack-unit-drop-target' : ''}${
                     selectedBlockUnitSet?.has(unitNumber) ? ' rack-unit-selected' : ''
-                  }${rackSpanHighlightUnitSet?.has(unitNumber) ? ' rack-unit-resize-range' : ''}`}
+                  }${rackSpanHighlightUnitSet?.has(unitNumber) ? ' rack-unit-resize-range' : ''}${
+                    isMobileLayout ? ' rack-unit--mobile-touch' : ''
+                  }`}
                   onClick={(event) => {
                     if (isPlacedBlockTopHit(event.clientX, event.clientY)) {
                       return;
                     }
-                    if (isMobileLayout && placementModeActive && placementModeSize !== null) {
+                    if (isMobileLayout) {
+                      if (suppressNextEmptyRackClickRef.current) {
+                        suppressNextEmptyRackClickRef.current = false;
+                      }
                       event.preventDefault();
-                      handleRackPlacementTap(event.clientX, event.clientY);
                       return;
                     }
-                    if (!isMobileLayout) {
-                      event.preventDefault();
-                      handleDesktopRackEmptySlotClick(event.clientX, event.clientY);
-                    }
+                    event.preventDefault();
+                    handleDesktopRackEmptySlotClick(event.clientX, event.clientY);
                   }}
                 >
                   <span className="rack-unit-label">{unitNumber}U</span>
@@ -2211,20 +2649,13 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
                   }}
                 />
               )}
-              {isMobileLayout &&
-                placementModeActive &&
-                placementModeSize !== null &&
-                placementRackPreview !== null && (
+              {isMobileLayout && mobileEmptyDragPreview && (
                   <div
-                    className={`placement-tap-preview${
-                      placementRackPreview.valid
-                        ? ' placement-tap-preview-valid'
-                        : ' placement-tap-preview-invalid'
-                    }`}
+                    className="mobile-empty-drag-preview placement-tap-preview placement-tap-preview-valid"
                     aria-hidden="true"
                     style={{
-                      top: `${(rackUnitsU - placementRackPreview.previewStartUnit) * RACK_UNIT_PX}px`,
-                      height: `${placementModeSize * RACK_UNIT_PX}px`,
+                      top: `${(rackUnitsU - mobileEmptyDragPreview.startUnit) * RACK_UNIT_PX}px`,
+                      height: `${mobileEmptyDragPreview.size * RACK_UNIT_PX}px`,
                     }}
                   />
                 )}
@@ -2474,25 +2905,48 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
               }}
             >
               <div className="details-modal-body">
-                <label className="form-field">
+                <div className="form-field device-type-field" ref={deviceTypeSelectorRef}>
                   <span>Device Type</span>
-                  <select
-                    value={detailsDraft.deviceType}
-                    onChange={(event) => {
-                      const next = event.target.value as DeviceType;
-                      setDetailsDraft((draft) => ({
-                        ...draft,
-                        deviceType: next,
-                      }));
-                    }}
+                  <button
+                    type="button"
+                    className="device-type-selector-trigger"
+                    aria-haspopup="listbox"
+                    aria-expanded={deviceTypeSelectorOpen}
+                    onClick={() => setDeviceTypeSelectorOpen((open) => !open)}
                   >
-                    {DEVICE_TYPES.map((deviceType) => (
-                      <option key={deviceType} value={deviceType}>
-                        {deviceType}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                    <span>{detailsDraft.deviceType}</span>
+                    <span aria-hidden="true" className="device-type-selector-caret">v</span>
+                  </button>
+                  {deviceTypeSelectorOpen ? (
+                    <div
+                      className="device-type-selector-list"
+                      role="listbox"
+                      aria-label="Device Type"
+                      tabIndex={-1}
+                    >
+                      {DEVICE_TYPES.map((deviceType) => (
+                        <button
+                          key={deviceType}
+                          type="button"
+                          role="option"
+                          aria-selected={detailsDraft.deviceType === deviceType}
+                          className={`device-type-selector-option${
+                            detailsDraft.deviceType === deviceType ? ' device-type-selector-option-selected' : ''
+                          }`}
+                          onClick={() => {
+                            setDetailsDraft((draft) => ({
+                              ...draft,
+                              deviceType,
+                            }));
+                            setDeviceTypeSelectorOpen(false);
+                          }}
+                        >
+                          {deviceType}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
                 <label className="form-field">
                   <span>Device Name</span>
                   <input
