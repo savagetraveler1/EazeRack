@@ -6,10 +6,12 @@ import { sortExpenses, useData } from "@/lib/data-context";
 import { EXPENSE_CATEGORIES, type ExpenseWithProject } from "@/lib/types";
 import { formatCurrency } from "@/lib/format";
 import { ProjectFormModal } from "@/components/project-form-modal";
+import { DeleteProjectButton } from "@/components/delete-project-button";
 import { StatusBadge } from "@/components/status-badge";
 import { ExpenseTable } from "@/components/expense-table";
 import { CategoryBadge } from "@/components/category-badge";
 import { PageSkeleton } from "@/components/page-skeleton";
+import { isLocalReceipt } from "@/lib/receipt-store";
 
 export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -43,6 +45,9 @@ export default function ProjectDetailPage() {
   );
 
   const total = projectExpenses.reduce((sum, e) => sum + e.amount, 0);
+  const receiptCount = projectExpenses.filter(
+    (e) => e.receipt_url && isLocalReceipt(e.receipt_url)
+  ).length;
   const categoryTotals = EXPENSE_CATEGORIES.map((category) => ({
     category,
     total: projectExpenses
@@ -76,11 +81,18 @@ export default function ProjectDetailPage() {
             Client: {project.client_name}
           </p>
         </div>
-        <div className="flex gap-3">
+        <div className="flex flex-wrap gap-3">
           <ProjectFormModal
             project={project}
             trigger={<>Edit Project</>}
             triggerClassName="rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+          />
+          <DeleteProjectButton
+            project={project}
+            expenseCount={projectExpenses.length}
+            receiptCount={receiptCount}
+            redirectTo="/projects"
+            className="rounded-lg border border-red-200 bg-white px-4 py-2.5 text-sm font-medium text-red-700 transition hover:bg-red-50"
           />
           <Link
             href={`/expenses/new?project=${project.id}`}

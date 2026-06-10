@@ -1,15 +1,20 @@
+"use client";
+
 import Link from "next/link";
 import type { ExpenseWithProject } from "@/lib/types";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { CategoryBadge } from "@/components/category-badge";
 import { ReceiptLink } from "@/components/receipt-link";
+import { DeleteExpenseButton } from "@/components/delete-expense-button";
 
 export function ExpenseTable({
   expenses,
   showProject = true,
+  showDelete = true,
 }: {
   expenses: ExpenseWithProject[];
   showProject?: boolean;
+  showDelete?: boolean;
 }) {
   if (expenses.length === 0) {
     return (
@@ -41,6 +46,9 @@ export function ExpenseTable({
               <th className="px-5 py-3 font-medium">Notes</th>
               <th className="px-5 py-3 font-medium">Receipt</th>
               <th className="px-5 py-3 text-right font-medium">Amount</th>
+              {showDelete && (
+                <th className="px-5 py-3 text-right font-medium">Actions</th>
+              )}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -78,6 +86,11 @@ export function ExpenseTable({
                 <td className="whitespace-nowrap px-5 py-3.5 text-right font-semibold text-slate-900">
                   {formatCurrency(expense.amount)}
                 </td>
+                {showDelete && (
+                  <td className="whitespace-nowrap px-5 py-3.5 text-right">
+                    <DeleteExpenseButton expense={expense} />
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>

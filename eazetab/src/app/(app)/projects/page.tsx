@@ -4,8 +4,10 @@ import Link from "next/link";
 import { useData } from "@/lib/data-context";
 import { formatCurrency } from "@/lib/format";
 import { ProjectFormModal } from "@/components/project-form-modal";
+import { DeleteProjectButton } from "@/components/delete-project-button";
 import { StatusBadge } from "@/components/status-badge";
 import { PageSkeleton } from "@/components/page-skeleton";
+import { isLocalReceipt } from "@/lib/receipt-store";
 
 export default function ProjectsPage() {
   const { hydrated, projects, expenses } = useData();
@@ -15,11 +17,18 @@ export default function ProjectsPage() {
   }
 
   const totals = new Map<string, { total: number; count: number }>();
+  const receiptCounts = new Map<string, number>();
   for (const expense of expenses) {
     const entry = totals.get(expense.project_id) ?? { total: 0, count: 0 };
     entry.total += expense.amount;
     entry.count += 1;
     totals.set(expense.project_id, entry);
+    if (expense.receipt_url && isLocalReceipt(expense.receipt_url)) {
+      receiptCounts.set(
+        expense.project_id,
+        (receiptCounts.get(expense.project_id) ?? 0) + 1
+      );
+    }
   }
 
   return (
@@ -82,11 +91,16 @@ export default function ProjectsPage() {
                       {stats.count} expense{stats.count === 1 ? "" : "s"}
                     </p>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap justify-end gap-2">
                     <ProjectFormModal
                       project={project}
                       trigger={<>Edit</>}
                       triggerClassName="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50"
+                    />
+                    <DeleteProjectButton
+                      project={project}
+                      expenseCount={stats.count}
+                      receiptCount={receiptCounts.get(project.id) ?? 0}
                     />
                     <Link
                       href={`/projects/${project.id}`}

@@ -15,6 +15,7 @@ import type {
   ProjectInput,
 } from "@/lib/types";
 import { SEED_EXPENSES, SEED_PROJECTS } from "@/lib/mock-data";
+import { deleteReceipt } from "@/lib/receipt-store";
 
 /**
  * Local data layer for the MVP.
@@ -38,7 +39,9 @@ type DataContextValue = {
   expenses: Expense[];
   addProject: (input: ProjectInput) => Project;
   updateProject: (id: string, input: ProjectInput) => void;
+  deleteProject: (id: string) => Promise<void>;
   addExpense: (input: ExpenseInput) => Expense;
+  deleteExpense: (id: string) => Promise<void>;
 };
 
 const DataContext = createContext<DataContextValue | null>(null);
@@ -100,6 +103,45 @@ export function DataProvider({ children }: { children: ReactNode }) {
     return expense;
   }, []);
 
+  const deleteProject = useCallback(async (id: string): Promise<void> => {
+    const receiptUrls: string[] = [];
+
+    setData((d) => {
+      const projectExpenses = d.expenses.filter((e) => e.project_id === id);
+      for (const expense of projectExpenses) {
+        if (expense.receipt_url) {
+          receiptUrls.push(expense.receipt_url);
+        }
+      }
+      return {
+        projects: d.projects.filter((p) => p.id !== id),
+        expenses: d.expenses.filter((e) => e.project_id !== id),
+      };
+    });
+
+    await Promise.all(receiptUrls.map((url) => deleteReceipt(url)));
+  }, []);
+
+  const deleteExpense = useCallback(async (id: string): Promise<void> => {
+    let receiptUrl: string | null = null;
+
+    setData((d) => {
+      const expense = d.expenses.find((e) => e.id === id);
+      if (!expense) {
+        return d;
+      }
+      receiptUrl = expense.receipt_url ?? null;
+      return {
+        ...d,
+        expenses: d.expenses.filter((e) => e.id !== id),
+      };
+    });
+
+    if (receiptUrl) {
+      await deleteReceipt(receiptUrl);
+    }
+  }, []);
+
   return (
     <DataContext.Provider
       value={{
@@ -108,7 +150,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
         expenses: data.expenses,
         addProject,
         updateProject,
+        deleteProject,
         addExpense,
+        deleteExpense,
       }}
     >
       {children}
