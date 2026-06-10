@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { ExpenseWithProject } from "@/lib/types";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { CategoryBadge } from "@/components/category-badge";
+import { ReceiptLink } from "@/components/receipt-link";
 
 export function ExpenseTable({
   expenses,
@@ -72,23 +73,7 @@ export function ExpenseTable({
                   {expense.notes || <span className="text-slate-300">—</span>}
                 </td>
                 <td className="whitespace-nowrap px-5 py-3.5">
-                  {expense.receipt_url ? (
-                    <a
-                      href={expense.receipt_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-emerald-700 hover:underline"
-                    >
-                      View
-                    </a>
-                  ) : (
-                    <span
-                      className="text-xs text-slate-300"
-                      title="Receipt links arrive with Google Drive integration"
-                    >
-                      —
-                    </span>
-                  )}
+                  <ReceiptLink receiptUrl={expense.receipt_url} />
                 </td>
                 <td className="whitespace-nowrap px-5 py-3.5 text-right font-semibold text-slate-900">
                   {formatCurrency(expense.amount)}

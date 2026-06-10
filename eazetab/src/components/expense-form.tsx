@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useData } from "@/lib/data-context";
 import {
@@ -9,6 +9,10 @@ import {
   type Project,
 } from "@/lib/types";
 import { todayISO } from "@/lib/format";
+import { saveReceipt } from "@/lib/receipt-store";
+
+const MAX_RECEIPT_BYTES = 10 * 1024 * 1024; // 10 MB
+const ACCEPTED_RECEIPT_TYPES = ["image/", "application/pdf"];
 
 const inputClass =
   "w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20";
@@ -33,9 +37,41 @@ export function ExpenseForm({
   const [amount, setAmount] = useState("");
   const [category, setCategory] = useState<ExpenseCategory>("Materials");
   const [notes, setNotes] = useState("");
+  const [receiptFile, setReceiptFile] = useState<File | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  function handleSubmit(e: FormEvent<HTMLFormElement>) {
+  function handleFileChange(e: ChangeEvent<HTMLInputElement>) {
+    setError(null);
+    const file = e.target.files?.[0] ?? null;
+    if (!file) {
+      setReceiptFile(null);
+      return;
+    }
+    if (!ACCEPTED_RECEIPT_TYPES.some((t) => file.type.startsWith(t))) {
+      setError("Receipts must be an image or a PDF.");
+      e.target.value = "";
+      setReceiptFile(null);
+      return;
+    }
+    if (file.size > MAX_RECEIPT_BYTES) {
+      setError("Receipt files must be 10 MB or smaller.");
+      e.target.value = "";
+      setReceiptFile(null);
+      return;
+    }
+    setReceiptFile(file);
+  }
+
+  function clearReceipt() {
+    setReceiptFile(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  }
+
+  async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
 
@@ -45,6 +81,18 @@ export function ExpenseForm({
       return;
     }
 
+    setSaving(true);
+    let receiptUrl: string | null = null;
+    if (receiptFile) {
+      try {
+        receiptUrl = await saveReceipt(receiptFile);
+      } catch {
+        setError("Could not save the receipt file. Try again or remove it.");
+        setSaving(false);
+        return;
+      }
+    }
+
     addExpense({
       project_id: projectId,
       vendor: vendor.trim(),
@@ -52,7 +100,7 @@ export function ExpenseForm({
       amount: Math.round(parsedAmount * 100) / 100,
       category,
       notes: notes.trim() || null,
-      receipt_url: null,
+      receipt_url: receiptUrl,
     });
 
     router.push(`/projects/${projectId}`);
@@ -174,22 +222,40 @@ export function ExpenseForm({
 
         <div className="sm:col-span-2">
           <label
-            htmlFor="receipt_url"
+            htmlFor="receipt"
             className="mb-1.5 block text-sm font-medium text-slate-700"
           >
-            Receipt Link{" "}
-            <span className="font-normal text-slate-400">(coming soon)</span>
+            Receipt{" "}
+            <span className="font-normal text-slate-400">(optional)</span>
           </label>
           <input
-            id="receipt_url"
-            type="url"
-            disabled
-            placeholder="Google Drive receipt link — available after Drive integration"
-            className={`${inputClass} cursor-not-allowed bg-slate-50 text-slate-400`}
+            ref={fileInputRef}
+            id="receipt"
+            type="file"
+            accept="image/*,application/pdf"
+            onChange={handleFileChange}
+            className="block w-full cursor-pointer rounded-lg border border-slate-300 text-sm text-slate-500 file:mr-4 file:cursor-pointer file:rounded-l-lg file:border-0 file:bg-slate-100 file:px-4 file:py-2.5 file:text-sm file:font-medium file:text-slate-700 hover:file:bg-slate-200"
           />
+          {receiptFile && (
+            <div className="mt-2 flex items-center justify-between rounded-lg bg-emerald-50 px-3.5 py-2 text-sm">
+              <span className="truncate text-emerald-800">
+                {receiptFile.name}{" "}
+                <span className="text-emerald-600">
+                  ({(receiptFile.size / 1024).toFixed(0)} KB)
+                </span>
+              </span>
+              <button
+                type="button"
+                onClick={clearReceipt}
+                className="ml-3 shrink-0 text-xs font-medium text-emerald-700 hover:underline"
+              >
+                Remove
+              </button>
+            </div>
+          )}
           <p className="mt-1.5 text-xs text-slate-400">
-            Receipts will attach automatically once Google Drive storage is
-            connected.
+            Image or PDF, up to 10 MB. Stored locally in this browser for the
+            MVP — Google Drive storage comes later.
           </p>
         </div>
 
@@ -227,9 +293,10 @@ export function ExpenseForm({
         </button>
         <button
           type="submit"
-          className="rounded-lg bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-700"
+          disabled={saving}
+          className="rounded-lg bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          Add Expense
+          {saving ? "Saving..." : "Add Expense"}
         </button>
       </div>
     </form>
