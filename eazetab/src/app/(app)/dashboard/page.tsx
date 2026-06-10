@@ -9,7 +9,7 @@ import { ExpenseTable } from "@/components/expense-table";
 import { PageSkeleton } from "@/components/page-skeleton";
 
 export default function DashboardPage() {
-  const { hydrated, projects, expenses } = useData();
+  const { hydrated, companies, projects, expenses } = useData();
 
   if (!hydrated) {
     return <PageSkeleton />;
@@ -57,24 +57,30 @@ export default function DashboardPage() {
         </Link>
       </div>
 
-      <div className="mt-8 grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3">
+      <div className="mt-8 grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-4">
+        <StatCard
+          label="Total Companies"
+          value={String(companies.length)}
+          hint="All companies"
+          accent="blue"
+        />
         <StatCard
           label="Total Projects"
           value={String(projects.length)}
           hint="All projects"
-          accent="blue"
+          accent="emerald"
         />
         <StatCard
           label="Total Expenses"
           value={formatCurrency(totalExpenses)}
           hint="All time, across all projects"
-          accent="emerald"
+          accent="amber"
         />
         <StatCard
           label="Expenses This Month"
           value={formatCurrency(monthTotal)}
           hint={monthLabel}
-          accent="amber"
+          accent="blue"
         />
       </div>
 

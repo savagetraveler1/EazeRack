@@ -19,10 +19,14 @@ export function ProjectFormModal({
   trigger: ReactNode;
   triggerClassName: string;
 }) {
-  const { addProject, updateProject } = useData();
+  const { addProject, updateProject, companies } = useData();
   const isEdit = Boolean(project);
+  const sortedCompanies = [...companies].sort((a, b) =>
+    a.company_name.localeCompare(b.company_name)
+  );
 
   const [open, setOpen] = useState(false);
+  const [companyId, setCompanyId] = useState(project?.company_id ?? "");
   const [projectName, setProjectName] = useState(project?.project_name ?? "");
   const [clientName, setClientName] = useState(project?.client_name ?? "");
   const [status, setStatus] = useState<ProjectStatus>(
@@ -30,6 +34,7 @@ export function ProjectFormModal({
   );
 
   function openModal() {
+    setCompanyId(project?.company_id ?? sortedCompanies[0]?.id ?? "");
     setProjectName(project?.project_name ?? "");
     setClientName(project?.client_name ?? "");
     setStatus(project?.status ?? "active");
@@ -40,6 +45,7 @@ export function ProjectFormModal({
     e.preventDefault();
 
     const values = {
+      company_id: companyId,
       project_name: projectName.trim(),
       client_name: clientName.trim(),
       status,
@@ -77,6 +83,36 @@ export function ProjectFormModal({
             </p>
 
             <form onSubmit={handleSubmit} className="mt-6 space-y-5">
+              <div>
+                <label
+                  htmlFor="company_id"
+                  className="mb-1.5 block text-sm font-medium text-slate-700"
+                >
+                  Company
+                </label>
+                <select
+                  id="company_id"
+                  required
+                  value={companyId}
+                  onChange={(e) => setCompanyId(e.target.value)}
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                >
+                  <option value="" disabled>
+                    Select a company...
+                  </option>
+                  {sortedCompanies.map((company) => (
+                    <option key={company.id} value={company.id}>
+                      {company.company_name}
+                    </option>
+                  ))}
+                </select>
+                {sortedCompanies.length === 0 && (
+                  <p className="mt-1.5 text-xs text-red-600">
+                    Create a company before adding projects.
+                  </p>
+                )}
+              </div>
+
               <div>
                 <label
                   htmlFor="project_name"

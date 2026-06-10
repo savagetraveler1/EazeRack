@@ -1,4 +1,4 @@
-import type { Expense, Project } from "@/lib/types";
+import type { Company, Expense, Project } from "@/lib/types";
 
 function daysAgo(days: number): string {
   const d = new Date();
@@ -15,9 +15,25 @@ function timestampDaysAgo(days: number): string {
   return d.toISOString();
 }
 
+export const SEED_COMPANIES: Company[] = [
+  {
+    id: "c-buildco",
+    company_name: "BuildCo Commercial",
+    notes: "Commercial and office projects.",
+    created_at: timestampDaysAgo(60),
+  },
+  {
+    id: "c-homeworks",
+    company_name: "HomeWorks Residential",
+    notes: "Residential remodels and service calls.",
+    created_at: timestampDaysAgo(35),
+  },
+];
+
 export const SEED_PROJECTS: Project[] = [
   {
     id: "p-riverside",
+    company_id: "c-buildco",
     project_name: "Riverside Office Build-Out",
     client_name: "Acme Corp",
     status: "active",
@@ -25,6 +41,7 @@ export const SEED_PROJECTS: Project[] = [
   },
   {
     id: "p-lakeview",
+    company_id: "c-homeworks",
     project_name: "Lakeview Kitchen Remodel",
     client_name: "The Hendersons",
     status: "active",
@@ -32,6 +49,7 @@ export const SEED_PROJECTS: Project[] = [
   },
   {
     id: "p-warehouse",
+    company_id: "c-buildco",
     project_name: "Warehouse Lighting Upgrade",
     client_name: "Midwest Logistics",
     status: "completed",

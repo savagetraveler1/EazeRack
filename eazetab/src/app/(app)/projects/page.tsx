@@ -10,12 +10,13 @@ import { PageSkeleton } from "@/components/page-skeleton";
 import { isLocalReceipt } from "@/lib/receipt-store";
 
 export default function ProjectsPage() {
-  const { hydrated, projects, expenses } = useData();
+  const { hydrated, companies, projects, expenses } = useData();
 
   if (!hydrated) {
     return <PageSkeleton />;
   }
 
+  const companyById = new Map(companies.map((company) => [company.id, company]));
   const totals = new Map<string, { total: number; count: number }>();
   const receiptCounts = new Map<string, number>();
   for (const expense of expenses) {
@@ -59,6 +60,7 @@ export default function ProjectsPage() {
         <div className="mt-8 grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3">
           {projects.map((project) => {
             const stats = totals.get(project.id) ?? { total: 0, count: 0 };
+            const company = companyById.get(project.company_id);
             return (
               <div
                 key={project.id}
@@ -74,6 +76,9 @@ export default function ProjectsPage() {
                     </Link>
                     <p className="mt-0.5 truncate text-sm text-slate-500">
                       {project.client_name}
+                    </p>
+                    <p className="mt-0.5 truncate text-xs font-medium text-emerald-700">
+                      {company?.company_name ?? "No company"}
                     </p>
                   </div>
                   <StatusBadge status={project.status} />

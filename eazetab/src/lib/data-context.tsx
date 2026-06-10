@@ -9,12 +9,14 @@ import {
   type ReactNode,
 } from "react";
 import type {
+  Company,
+  CompanyInput,
   Expense,
   ExpenseInput,
   Project,
   ProjectInput,
 } from "@/lib/types";
-import { SEED_EXPENSES, SEED_PROJECTS } from "@/lib/mock-data";
+import { SEED_COMPANIES, SEED_EXPENSES, SEED_PROJECTS } from "@/lib/mock-data";
 import { deleteReceipt } from "@/lib/receipt-store";
 
 /**
@@ -28,6 +30,7 @@ import { deleteReceipt } from "@/lib/receipt-store";
 const STORAGE_KEY = "eazetab-data-v1";
 
 type StoredData = {
+  companies: Company[];
   projects: Project[];
   expenses: Expense[];
 };
@@ -35,8 +38,12 @@ type StoredData = {
 type DataContextValue = {
   /** False until localStorage has been read on the client. */
   hydrated: boolean;
+  companies: Company[];
   projects: Project[];
   expenses: Expense[];
+  addCompany: (input: CompanyInput) => Company;
+  updateCompany: (id: string, input: CompanyInput) => void;
+  deleteCompany: (id: string) => Promise<void>;
   addProject: (input: ProjectInput) => Project;
   updateProject: (id: string, input: ProjectInput) => void;
   deleteProject: (id: string) => Promise<void>;
@@ -46,24 +53,55 @@ type DataContextValue = {
 
 const DataContext = createContext<DataContextValue | null>(null);
 
+function normalizeData(parsed: Partial<StoredData>): StoredData {
+  const companies =
+    Array.isArray(parsed.companies) && parsed.companies.length > 0
+      ? parsed.companies
+      : SEED_COMPANIES;
+  const fallbackCompanyId = companies[0]?.id ?? SEED_COMPANIES[0].id;
+  const companyIds = new Set(companies.map((company) => company.id));
+  const projects = Array.isArray(parsed.projects)
+    ? parsed.projects.map((project) => ({
+        ...project,
+        company_id: companyIds.has(project.company_id)
+          ? project.company_id
+          : fallbackCompanyId,
+      }))
+    : SEED_PROJECTS;
+  const projectIds = new Set(projects.map((p) => p.id));
+  const expenses = Array.isArray(parsed.expenses)
+    ? parsed.expenses.filter((expense) => projectIds.has(expense.project_id))
+    : SEED_EXPENSES;
+
+  return { companies, projects, expenses };
+}
+
 function loadData(): StoredData {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (raw) {
-      const parsed = JSON.parse(raw) as StoredData;
+      const parsed = JSON.parse(raw) as Partial<StoredData>;
       if (Array.isArray(parsed.projects) && Array.isArray(parsed.expenses)) {
-        return parsed;
+        return normalizeData(parsed);
       }
     }
   } catch {
     // Corrupted storage; fall through to seed data.
   }
-  return { projects: SEED_PROJECTS, expenses: SEED_EXPENSES };
+  return {
+    companies: SEED_COMPANIES,
+    projects: SEED_PROJECTS,
+    expenses: SEED_EXPENSES,
+  };
 }
 
 export function DataProvider({ children }: { children: ReactNode }) {
   const [hydrated, setHydrated] = useState(false);
-  const [data, setData] = useState<StoredData>({ projects: [], expenses: [] });
+  const [data, setData] = useState<StoredData>({
+    companies: [],
+    projects: [],
+    expenses: [],
+  });
 
   useEffect(() => {
     setData(loadData());
@@ -75,6 +113,25 @@ export function DataProvider({ children }: { children: ReactNode }) {
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     }
   }, [data, hydrated]);
+
+  const addCompany = useCallback((input: CompanyInput): Company => {
+    const company: Company = {
+      ...input,
+      id: crypto.randomUUID(),
+      created_at: new Date().toISOString(),
+    };
+    setData((d) => ({ ...d, companies: [company, ...d.companies] }));
+    return company;
+  }, []);
+
+  const updateCompany = useCallback((id: string, input: CompanyInput) => {
+    setData((d) => ({
+      ...d,
+      companies: d.companies.map((c) =>
+        c.id === id ? { ...c, ...input } : c
+      ),
+    }));
+  }, []);
 
   const addProject = useCallback((input: ProjectInput): Project => {
     const project: Project = {
@@ -103,6 +160,31 @@ export function DataProvider({ children }: { children: ReactNode }) {
     return expense;
   }, []);
 
+  const deleteCompany = useCallback(async (id: string): Promise<void> => {
+    const receiptUrls: string[] = [];
+
+    setData((d) => {
+      const projectIds = new Set(
+        d.projects.filter((p) => p.company_id === id).map((p) => p.id)
+      );
+      const companyExpenses = d.expenses.filter((e) =>
+        projectIds.has(e.project_id)
+      );
+      for (const expense of companyExpenses) {
+        if (expense.receipt_url) {
+          receiptUrls.push(expense.receipt_url);
+        }
+      }
+      return {
+        companies: d.companies.filter((c) => c.id !== id),
+        projects: d.projects.filter((p) => p.company_id !== id),
+        expenses: d.expenses.filter((e) => !projectIds.has(e.project_id)),
+      };
+    });
+
+    await Promise.all(receiptUrls.map((url) => deleteReceipt(url)));
+  }, []);
+
   const deleteProject = useCallback(async (id: string): Promise<void> => {
     const receiptUrls: string[] = [];
 
@@ -114,6 +196,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         }
       }
       return {
+        ...d,
         projects: d.projects.filter((p) => p.id !== id),
         expenses: d.expenses.filter((e) => e.project_id !== id),
       };
@@ -146,8 +229,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
     <DataContext.Provider
       value={{
         hydrated,
+        companies: data.companies,
         projects: data.projects,
         expenses: data.expenses,
+        addCompany,
+        updateCompany,
+        deleteCompany,
         addProject,
         updateProject,
         deleteProject,

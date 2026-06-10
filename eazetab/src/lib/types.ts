@@ -12,8 +12,16 @@ export const EXPENSE_CATEGORIES = [
 ] as const;
 export type ExpenseCategory = (typeof EXPENSE_CATEGORIES)[number];
 
+export type Company = {
+  id: string;
+  company_name: string;
+  notes: string | null;
+  created_at: string;
+};
+
 export type Project = {
   id: string;
+  company_id: string;
   project_name: string;
   client_name: string;
   status: ProjectStatus;
@@ -38,5 +46,6 @@ export type ExpenseWithProject = Expense & {
   project: Pick<Project, "id" | "project_name"> | null;
 };
 
+export type CompanyInput = Omit<Company, "id" | "created_at">;
 export type ProjectInput = Omit<Project, "id" | "created_at">;
 export type ExpenseInput = Omit<Expense, "id" | "created_at">;

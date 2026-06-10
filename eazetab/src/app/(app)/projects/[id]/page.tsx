@@ -15,13 +15,16 @@ import { isLocalReceipt } from "@/lib/receipt-store";
 
 export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const { hydrated, projects, expenses } = useData();
+  const { hydrated, companies, projects, expenses } = useData();
 
   if (!hydrated) {
     return <PageSkeleton />;
   }
 
   const project = projects.find((p) => p.id === id);
+  const company = project
+    ? companies.find((c) => c.id === project.company_id)
+    : null;
 
   if (!project) {
     return (
@@ -79,6 +82,9 @@ export default function ProjectDetailPage() {
           </div>
           <p className="mt-1 text-sm text-slate-500">
             Client: {project.client_name}
+          </p>
+          <p className="mt-1 text-sm font-medium text-emerald-700">
+            Company: {company?.company_name ?? "No company"}
           </p>
         </div>
         <div className="flex flex-wrap gap-3">
