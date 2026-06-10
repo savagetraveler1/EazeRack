@@ -80,6 +80,22 @@ export async function getReceipt(
   return receipt;
 }
 
+export async function deleteReceipt(receiptUrl: string): Promise<void> {
+  if (!receiptUrl.startsWith(LOCAL_RECEIPT_PREFIX)) {
+    return;
+  }
+  const id = receiptUrl.slice(LOCAL_RECEIPT_PREFIX.length);
+
+  const db = await openDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, "readwrite");
+    tx.objectStore(STORE_NAME).delete(id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+  db.close();
+}
+
 export function isLocalReceipt(receiptUrl: string): boolean {
   return receiptUrl.startsWith(LOCAL_RECEIPT_PREFIX);
 }

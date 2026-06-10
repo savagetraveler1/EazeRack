@@ -10,6 +10,7 @@ import {
 } from "@/lib/types";
 import { todayISO } from "@/lib/format";
 import { saveReceipt } from "@/lib/receipt-store";
+import { saveDraft } from "@/lib/draft-store";
 
 const MAX_RECEIPT_BYTES = 10 * 1024 * 1024; // 10 MB
 const ACCEPTED_RECEIPT_TYPES = ["image/", "application/pdf"];
@@ -82,8 +83,19 @@ export function ExpenseForm({
     }
 
     setSaving(true);
-    let receiptUrl: string | null = null;
+    const values = {
+      project_id: projectId,
+      vendor: vendor.trim(),
+      expense_date: expenseDate,
+      amount: Math.round(parsedAmount * 100) / 100,
+      category,
+      notes: notes.trim() || null,
+    };
+
     if (receiptFile) {
+      // With a receipt attached, park the expense as a draft and send the
+      // user to the review step instead of saving immediately.
+      let receiptUrl: string;
       try {
         receiptUrl = await saveReceipt(receiptFile);
       } catch {
@@ -91,18 +103,17 @@ export function ExpenseForm({
         setSaving(false);
         return;
       }
+      saveDraft({
+        ...values,
+        receipt_url: receiptUrl,
+        receipt_name: receiptFile.name,
+        receipt_type: receiptFile.type,
+      });
+      router.push("/receipts/review");
+      return;
     }
 
-    addExpense({
-      project_id: projectId,
-      vendor: vendor.trim(),
-      expense_date: expenseDate,
-      amount: Math.round(parsedAmount * 100) / 100,
-      category,
-      notes: notes.trim() || null,
-      receipt_url: receiptUrl,
-    });
-
+    addExpense({ ...values, receipt_url: null });
     router.push(`/projects/${projectId}`);
   }
 
@@ -254,8 +265,9 @@ export function ExpenseForm({
             </div>
           )}
           <p className="mt-1.5 text-xs text-slate-400">
-            Image or PDF, up to 10 MB. Stored locally in this browser for the
-            MVP — Google Drive storage comes later.
+            Image or PDF, up to 10 MB. With a receipt attached, you&apos;ll
+            review everything before the expense is saved. Stored locally in
+            this browser for the MVP — Google Drive storage comes later.
           </p>
         </div>
 
@@ -296,7 +308,11 @@ export function ExpenseForm({
           disabled={saving}
           className="rounded-lg bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {saving ? "Saving..." : "Add Expense"}
+          {saving
+            ? "Saving..."
+            : receiptFile
+              ? "Review Receipt"
+              : "Add Expense"}
         </button>
       </div>
     </form>
