@@ -22,7 +22,7 @@ import {
   type ExpenseDraft,
 } from "@/lib/draft-store";
 import { deleteReceipt, getReceipt, saveReceipt } from "@/lib/receipt-store";
-import { scanReceiptImage, type OcrSuggestions } from "@/lib/ocr";
+import { scanReceipt, type OcrSuggestions } from "@/lib/ocr";
 import { ReceiptPreview } from "@/components/receipt-preview";
 import { OcrBadge } from "@/components/ocr-badge";
 import { PageSkeleton } from "@/components/page-skeleton";
@@ -73,14 +73,10 @@ export default function ReviewReceiptsPage() {
       return;
     }
 
-    if (draft.receipt_type === "application/pdf") {
-      setOcrStatus("unavailable");
-      setOcrSuggestions(null);
-      setOcrApplied(new Set());
-      return;
-    }
-
-    if (!draft.receipt_type?.startsWith("image/")) {
+    if (
+      draft.receipt_type !== "application/pdf" &&
+      !draft.receipt_type?.startsWith("image/")
+    ) {
       setOcrStatus("idle");
       return;
     }
@@ -99,7 +95,10 @@ export default function ReviewReceiptsPage() {
           return;
         }
 
-        const { suggestions } = await scanReceiptImage(receipt.blob);
+        const { suggestions } = await scanReceipt(
+          receipt.blob,
+          draft.receipt_type
+        );
         if (cancelled) return;
 
         const patch: Partial<ExpenseDraft> = {};
@@ -555,8 +554,8 @@ function OcrStatusBanner({
   if (status === "unavailable") {
     return (
       <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-        OCR runs on image receipts right now. This receipt is attached, so enter
-        the visible vendor, date, total amount, and category manually.
+        OCR is not available for this receipt type. Enter the visible vendor,
+        date, total amount, and category manually.
       </div>
     );
   }
@@ -609,7 +608,7 @@ const PIPELINE_STEPS = [
   {
     title: "Attach a receipt",
     description:
-      "Image receipts are scanned locally for vendor, date, total amount, and category.",
+      "Image receipts and first-page PDF receipts are scanned locally for vendor, date, total amount, and category.",
   },
   {
     title: "Review and save",

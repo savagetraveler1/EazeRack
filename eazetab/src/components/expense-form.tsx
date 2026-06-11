@@ -59,7 +59,8 @@ export function ExpenseForm({
   const [newProjectClientName, setNewProjectClientName] = useState("");
   const [newProjectStatus, setNewProjectStatus] =
     useState<ProjectStatus>("active");
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const photoInputRef = useRef<HTMLInputElement>(null);
+  const uploadInputRef = useRef<HTMLInputElement>(null);
 
   const filteredProjects = projects
     .filter((project) => project.company_id === companyId)
@@ -236,21 +237,46 @@ export function ExpenseForm({
           </div>
 
           <div className="sm:col-span-2">
-            <label
-              htmlFor="receipt"
-              className="mb-1.5 block text-sm font-medium text-slate-700"
-            >
+            <p className="mb-1.5 block text-sm font-medium text-slate-700">
               Receipt
-            </label>
+            </p>
             <input
-              ref={fileInputRef}
-              id="receipt"
+              ref={photoInputRef}
+              id="receipt-photo"
+              type="file"
+              accept="image/*"
+              capture="environment"
+              disabled={!projectId || saving}
+              onChange={handleFileChange}
+              className="hidden"
+            />
+            <input
+              ref={uploadInputRef}
+              id="receipt-upload"
               type="file"
               accept="image/*,application/pdf"
               disabled={!projectId || saving}
               onChange={handleFileChange}
-              className="block w-full cursor-pointer rounded-lg border border-slate-300 text-sm text-slate-500 file:mr-4 file:cursor-pointer file:rounded-l-lg file:border-0 file:bg-slate-100 file:px-4 file:py-2.5 file:text-sm file:font-medium file:text-slate-700 hover:file:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-60"
+              className="hidden"
             />
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <button
+                type="button"
+                disabled={!projectId || saving}
+                onClick={() => photoInputRef.current?.click()}
+                className="flex min-h-14 items-center justify-center rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Take Photo
+              </button>
+              <button
+                type="button"
+                disabled={!projectId || saving}
+                onClick={() => uploadInputRef.current?.click()}
+                className="flex min-h-14 items-center justify-center rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Upload File
+              </button>
+            </div>
             {receiptFile && (
               <div className="mt-2 flex items-center justify-between rounded-lg bg-emerald-50 px-3.5 py-2 text-sm">
                 <span className="truncate text-emerald-800">
@@ -261,7 +287,7 @@ export function ExpenseForm({
                 </span>
                 <button
                   type="button"
-                  onClick={() => fileInputRef.current?.click()}
+                  onClick={() => uploadInputRef.current?.click()}
                   disabled={saving}
                   className="ml-3 shrink-0 text-xs font-medium text-emerald-700 hover:underline"
                 >
@@ -271,8 +297,8 @@ export function ExpenseForm({
             )}
             <p className="mt-1.5 text-xs text-slate-400">
               Select a receipt after choosing the company and project. Image
-              receipts are scanned locally for vendor, date, total amount, and
-              category suggestions. PDFs can still be reviewed manually.
+              and PDF receipts are scanned locally for vendor, date, total
+              amount, and category suggestions.
             </p>
           </div>
         </div>

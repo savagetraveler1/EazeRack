@@ -2,7 +2,7 @@
  * Client-side receipt OCR for the local MVP.
  *
  * Runs in the browser only. Image receipts are scanned with Tesseract.js; PDFs
- * are attached and reviewed manually until PDF rendering is added.
+ * render their first page to a canvas and then use the same OCR path.
  */
 
 import { EXPENSE_CATEGORIES, type ExpenseCategory } from "@/lib/types";
@@ -19,6 +19,16 @@ export type OcrResult = {
   rawText: string;
 };
 
+export async function scanReceipt(
+  blob: Blob,
+  receiptType: string | null
+): Promise<OcrResult> {
+  if (receiptType === "application/pdf") {
+    return scanReceiptPdf(blob);
+  }
+  return scanReceiptImage(blob);
+}
+
 export async function scanReceiptImage(blob: Blob): Promise<OcrResult> {
   const { createWorker } = await import("tesseract.js");
   const worker = await createWorker("eng");
@@ -29,6 +39,51 @@ export async function scanReceiptImage(blob: Blob): Promise<OcrResult> {
     return { rawText: text, suggestions: parseReceiptText(text) };
   } finally {
     await worker.terminate();
+  }
+}
+
+async function scanReceiptPdf(blob: Blob): Promise<OcrResult> {
+  const firstPageImage = await renderFirstPdfPage(blob);
+  return scanReceiptImage(firstPageImage);
+}
+
+async function renderFirstPdfPage(blob: Blob): Promise<Blob> {
+  const pdfjs = await import("pdfjs-dist");
+  pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+    "pdfjs-dist/build/pdf.worker.mjs",
+    import.meta.url
+  ).toString();
+
+  const pdf = await pdfjs.getDocument({
+    data: new Uint8Array(await blob.arrayBuffer()),
+  }).promise;
+
+  try {
+    const page = await pdf.getPage(1);
+    const viewport = page.getViewport({ scale: 2 });
+    const canvas = document.createElement("canvas");
+    const context = canvas.getContext("2d");
+
+    if (!context) {
+      throw new Error("Could not create a canvas for PDF OCR.");
+    }
+
+    canvas.width = Math.ceil(viewport.width);
+    canvas.height = Math.ceil(viewport.height);
+
+    await page.render({ canvas, canvasContext: context, viewport }).promise;
+
+    return await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob((imageBlob) => {
+        if (imageBlob) {
+          resolve(imageBlob);
+        } else {
+          reject(new Error("Could not render the PDF page for OCR."));
+        }
+      }, "image/png");
+    });
+  } finally {
+    await pdf.cleanup();
   }
 }
 
@@ -95,30 +150,70 @@ function parseDate(text: string): string | null {
 }
 
 function parseAmount(text: string, lines: string[]): number | null {
-  const totalKeywords =
-    /total|amount\s*due|balance\s*due|grand\s*total|subtotal/i;
+  const finalTotalKeywordGroups: RegExp[] = [
+    /\btotal\b/i,
+    /\bgrand\s*total\b/i,
+    /\bamount\s*paid\b/i,
+    /\bamount\s*due\b/i,
+    /\bbalance\s*due\b/i,
+    /\btotal\s*due\b/i,
+    /\bpaid\b/i,
+  ];
 
-  for (const line of lines) {
-    if (!totalKeywords.test(line)) continue;
-    const amount = extractLargestAmount(line);
+  for (const keyword of finalTotalKeywordGroups) {
+    const amount = extractAmountNearKeyword(lines, keyword, {
+      exclude: /\bsub\s*total\b|\bsubtotal\b/i,
+    });
     if (amount !== null) return amount;
   }
 
-  return extractLargestAmount(text);
+  const subtotal = extractAmountNearKeyword(lines, /\bsub\s*total\b|\bsubtotal\b/i);
+  if (subtotal !== null) return subtotal;
+
+  return extractFirstAmount(text);
 }
 
-function extractLargestAmount(text: string): number | null {
-  const matches = [
-    ...text.matchAll(/\$?\s*(\d{1,3}(?:,\d{3})*\.\d{2}|\d+\.\d{2})/g),
-  ];
-  if (matches.length === 0) return null;
+function extractAmountNearKeyword(
+  lines: string[],
+  keyword: RegExp,
+  options: { exclude?: RegExp } = {}
+): number | null {
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = lines[i];
+    if (!keyword.test(line)) continue;
+    if (options.exclude?.test(line)) continue;
 
-  const amounts = matches
+    const sameLineAmount = extractLastAmount(line);
+    if (sameLineAmount !== null) return sameLineAmount;
+
+    for (const nearbyLine of [lines[i + 1], lines[i - 1]]) {
+      if (!nearbyLine || options.exclude?.test(nearbyLine)) continue;
+      const nearbyAmount = extractLastAmount(nearbyLine);
+      if (nearbyAmount !== null) return nearbyAmount;
+    }
+  }
+
+  return null;
+}
+
+function extractLastAmount(text: string): number | null {
+  const amounts = extractAmounts(text);
+  return amounts.at(-1) ?? null;
+}
+
+function extractFirstAmount(text: string): number | null {
+  const amounts = extractAmounts(text);
+  return amounts[0] ?? null;
+}
+
+function extractAmounts(text: string): number[] {
+  const matches = text.matchAll(
+    /\$?\s*(\d{1,3}(?:,\d{3})*\.\d{2}|\d+\.\d{2})/g
+  );
+
+  return [...matches]
     .map((match) => Number.parseFloat(match[1].replace(/,/g, "")))
     .filter((amount) => amount > 0 && amount < 1_000_000);
-
-  if (amounts.length === 0) return null;
-  return Math.max(...amounts);
 }
 
 function parseCategory(text: string): ExpenseCategory | null {
