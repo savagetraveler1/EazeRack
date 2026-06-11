@@ -54,23 +54,40 @@ type DataContextValue = {
 const DataContext = createContext<DataContextValue | null>(null);
 
 function normalizeData(parsed: Partial<StoredData>): StoredData {
+  const parsedCompanies = Array.isArray(parsed.companies)
+    ? parsed.companies.filter(
+        (company): company is Company =>
+          typeof company?.id === "string" &&
+          typeof company?.company_name === "string"
+      )
+    : [];
   const companies =
-    Array.isArray(parsed.companies) && parsed.companies.length > 0
-      ? parsed.companies
-      : SEED_COMPANIES;
+    parsedCompanies.length > 0 ? parsedCompanies : SEED_COMPANIES;
   const fallbackCompanyId = companies[0]?.id ?? SEED_COMPANIES[0].id;
   const companyIds = new Set(companies.map((company) => company.id));
   const projects = Array.isArray(parsed.projects)
-    ? parsed.projects.map((project) => ({
-        ...project,
-        company_id: companyIds.has(project.company_id)
-          ? project.company_id
-          : fallbackCompanyId,
-      }))
+    ? parsed.projects
+        .filter(
+          (project): project is Project =>
+            typeof project?.id === "string" &&
+            typeof project?.project_name === "string" &&
+            typeof project?.client_name === "string"
+        )
+        .map((project) => ({
+          ...project,
+          company_id: companyIds.has(project.company_id)
+            ? project.company_id
+            : fallbackCompanyId,
+        }))
     : SEED_PROJECTS;
   const projectIds = new Set(projects.map((p) => p.id));
   const expenses = Array.isArray(parsed.expenses)
-    ? parsed.expenses.filter((expense) => projectIds.has(expense.project_id))
+    ? parsed.expenses.filter(
+        (expense): expense is Expense =>
+          typeof expense?.id === "string" &&
+          typeof expense?.project_id === "string" &&
+          projectIds.has(expense.project_id)
+      )
     : SEED_EXPENSES;
 
   return { companies, projects, expenses };
