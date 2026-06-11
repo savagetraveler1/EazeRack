@@ -44,7 +44,7 @@ const inputClass =
 
 export default function ReviewReceiptsPage() {
   const router = useRouter();
-  const { hydrated, projects, addExpense } = useData();
+  const { hydrated, projects, submissions, addExpense } = useData();
 
   const [draftLoaded, setDraftLoaded] = useState(false);
   const [draft, setDraft] = useState<ExpenseDraft | null>(null);
@@ -225,6 +225,10 @@ export default function ReviewReceiptsPage() {
       setError("Select a project.");
       return;
     }
+    if (!draft.submission_id) {
+      setError("Select a submission.");
+      return;
+    }
     if (!draft.vendor.trim()) {
       setError("Enter a vendor.");
       return;
@@ -236,6 +240,7 @@ export default function ReviewReceiptsPage() {
 
     addExpense({
       project_id: draft.project_id,
+      submission_id: draft.submission_id,
       vendor: draft.vendor.trim(),
       expense_date: draft.expense_date,
       amount: Math.round(parsedAmount * 100) / 100,
@@ -263,6 +268,9 @@ export default function ReviewReceiptsPage() {
 
   const selectedProject = projects.find(
     (project) => project.id === draft.project_id
+  );
+  const selectedSubmission = submissions.find(
+    (submission) => submission.id === draft.submission_id
   );
 
   return (
@@ -348,6 +356,12 @@ export default function ReviewReceiptsPage() {
                 {selectedProject
                   ? `${selectedProject.project_name} — ${selectedProject.client_name}`
                   : "Selected project"}
+              </p>
+              <p className="mt-2 text-xs font-medium uppercase tracking-wide text-slate-400">
+                Submission
+              </p>
+              <p className="mt-1 font-medium text-slate-800">
+                {selectedSubmission?.submission_name ?? "Selected submission"}
               </p>
             </div>
 

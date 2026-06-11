@@ -11,6 +11,7 @@ import {
 import { todayISO } from "@/lib/format";
 import { saveReceipt } from "@/lib/receipt-store";
 import { saveDraft } from "@/lib/draft-store";
+import { SubmissionFormModal } from "@/components/submission-form-modal";
 
 const MAX_RECEIPT_BYTES = 10 * 1024 * 1024; // 10 MB
 const ACCEPTED_RECEIPT_TYPES = ["image/", "application/pdf"];
@@ -38,7 +39,7 @@ export function ExpenseForm({
   defaultProjectId?: string;
 }) {
   const router = useRouter();
-  const { addCompany, addProject, companies } = useData();
+  const { addCompany, addProject, companies, submissions } = useData();
   const sortedCompanies = [...companies].sort((a, b) =>
     a.company_name.localeCompare(b.company_name)
   );
@@ -48,6 +49,7 @@ export function ExpenseForm({
 
   const [companyId, setCompanyId] = useState(defaultProject?.company_id ?? "");
   const [projectId, setProjectId] = useState(defaultProject?.id ?? "");
+  const [submissionId, setSubmissionId] = useState("");
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -65,6 +67,16 @@ export function ExpenseForm({
   const filteredProjects = projects
     .filter((project) => project.company_id === companyId)
     .sort((a, b) => a.project_name.localeCompare(b.project_name));
+  const selectedProject = projectId
+    ? projects.find((project) => project.id === projectId)
+    : null;
+  const filteredSubmissions = submissions
+    .filter((submission) => submission.project_id === projectId)
+    .sort(
+      (a, b) =>
+        b.submitted_at.localeCompare(a.submitted_at) ||
+        b.created_at.localeCompare(a.created_at)
+    );
 
   function openCompanyModal() {
     setNewCompanyName("");
@@ -88,6 +100,7 @@ export function ExpenseForm({
     setCompanyId(value);
     if (!projects.some((p) => p.id === projectId && p.company_id === value)) {
       setProjectId("");
+      setSubmissionId("");
     }
   }
 
@@ -97,6 +110,7 @@ export function ExpenseForm({
       return;
     }
     setProjectId(value);
+    setSubmissionId("");
   }
 
   function handleCreateCompany(e: FormEvent<HTMLFormElement>) {
@@ -119,6 +133,7 @@ export function ExpenseForm({
       status: newProjectStatus,
     });
     setProjectId(project.id);
+    setSubmissionId("");
     setProjectModalOpen(false);
   }
 
@@ -129,8 +144,10 @@ export function ExpenseForm({
       setReceiptFile(null);
       return;
     }
-    if (!projectId) {
-      setError("Select a company and project before attaching a receipt.");
+    if (!projectId || !submissionId) {
+      setError(
+        "Select a company, project, and submission before attaching a receipt."
+      );
       e.target.value = "";
       setReceiptFile(null);
       return;
@@ -154,6 +171,7 @@ export function ExpenseForm({
       const receiptUrl = await saveReceipt(file);
       saveDraft({
         project_id: projectId,
+        submission_id: submissionId,
         vendor: "",
         expense_date: todayISO(),
         amount: 0,
@@ -236,6 +254,52 @@ export function ExpenseForm({
             </select>
           </div>
 
+          {selectedProject && (
+            <div className="sm:col-span-2">
+              <div className="flex items-center justify-between gap-3">
+                <label
+                  htmlFor="submission"
+                  className="mb-1.5 block text-sm font-medium text-slate-700"
+                >
+                  Submission
+                </label>
+                <SubmissionFormModal
+                  project={selectedProject}
+                  trigger={<>+ New Submission</>}
+                  triggerClassName="mb-1.5 text-xs font-semibold text-emerald-700 transition hover:text-emerald-800 hover:underline"
+                  onCreated={(submission) => setSubmissionId(submission.id)}
+                />
+              </div>
+              {filteredSubmissions.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-sm text-slate-600">
+                  <p className="font-medium text-slate-700">
+                    No submissions for this project yet.
+                  </p>
+                  <p className="mt-1 text-slate-500">
+                    Create a submission batch before attaching receipts.
+                  </p>
+                </div>
+              ) : (
+                <select
+                  id="submission"
+                  required
+                  value={submissionId}
+                  onChange={(e) => setSubmissionId(e.target.value)}
+                  className={inputClass}
+                >
+                  <option value="" disabled>
+                    Select a submission...
+                  </option>
+                  {filteredSubmissions.map((submission) => (
+                    <option key={submission.id} value={submission.id}>
+                      {submission.submission_name} ({submission.status})
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+          )}
+
           <div className="sm:col-span-2">
             <p className="mb-1.5 block text-sm font-medium text-slate-700">
               Receipt
@@ -246,7 +310,7 @@ export function ExpenseForm({
               type="file"
               accept="image/*"
               capture="environment"
-              disabled={!projectId || saving}
+              disabled={!projectId || !submissionId || saving}
               onChange={handleFileChange}
               className="hidden"
             />
@@ -255,14 +319,14 @@ export function ExpenseForm({
               id="receipt-upload"
               type="file"
               accept="image/*,application/pdf"
-              disabled={!projectId || saving}
+              disabled={!projectId || !submissionId || saving}
               onChange={handleFileChange}
               className="hidden"
             />
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <button
                 type="button"
-                disabled={!projectId || saving}
+                disabled={!projectId || !submissionId || saving}
                 onClick={() => photoInputRef.current?.click()}
                 className="flex min-h-14 items-center justify-center rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
@@ -270,7 +334,7 @@ export function ExpenseForm({
               </button>
               <button
                 type="button"
-                disabled={!projectId || saving}
+                disabled={!projectId || !submissionId || saving}
                 onClick={() => uploadInputRef.current?.click()}
                 className="flex min-h-14 items-center justify-center rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
               >
@@ -296,9 +360,9 @@ export function ExpenseForm({
               </div>
             )}
             <p className="mt-1.5 text-xs text-slate-400">
-              Select a receipt after choosing the company and project. Image
-              and PDF receipts are scanned locally for vendor, date, total
-              amount, and category suggestions.
+              Select a receipt after choosing the company, project, and
+              submission. Image and PDF receipts are scanned locally for vendor,
+              date, total amount, and category suggestions.
             </p>
           </div>
         </div>

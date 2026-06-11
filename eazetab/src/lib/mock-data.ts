@@ -1,4 +1,4 @@
-import type { Company, Expense, Project } from "@/lib/types";
+import type { Company, Expense, Project, Submission } from "@/lib/types";
 
 function daysAgo(days: number): string {
   const d = new Date();
@@ -57,10 +57,41 @@ export const SEED_PROJECTS: Project[] = [
   },
 ];
 
+export const SEED_SUBMISSIONS: Submission[] = [
+  {
+    id: "s-riverside-expense-bom",
+    project_id: "p-riverside",
+    submission_name: "Expense BOM",
+    submitted_at: daysAgo(2),
+    status: "Open",
+    notes: "Initial project materials and jobsite purchases.",
+    created_at: timestampDaysAgo(2),
+  },
+  {
+    id: "s-lakeview-initial-materials",
+    project_id: "p-lakeview",
+    submission_name: "Initial Materials",
+    submitted_at: daysAgo(5),
+    status: "Open",
+    notes: "First receipt batch for the kitchen remodel.",
+    created_at: timestampDaysAgo(5),
+  },
+  {
+    id: "s-warehouse-final-materials",
+    project_id: "p-warehouse",
+    submission_name: "Final Materials",
+    submitted_at: daysAgo(32),
+    status: "Closed",
+    notes: "Closeout receipts for the lighting upgrade.",
+    created_at: timestampDaysAgo(32),
+  },
+];
+
 export const SEED_EXPENSES: Expense[] = [
   {
     id: "e-1",
     project_id: "p-riverside",
+    submission_id: "s-riverside-expense-bom",
     vendor: "Home Depot",
     expense_date: daysAgo(2),
     amount: 482.16,
@@ -73,6 +104,7 @@ export const SEED_EXPENSES: Expense[] = [
   {
     id: "e-2",
     project_id: "p-riverside",
+    submission_id: "s-riverside-expense-bom",
     vendor: "Shell",
     expense_date: daysAgo(3),
     amount: 64.5,
@@ -85,6 +117,7 @@ export const SEED_EXPENSES: Expense[] = [
   {
     id: "e-3",
     project_id: "p-lakeview",
+    submission_id: "s-lakeview-initial-materials",
     vendor: "Ferguson Plumbing",
     expense_date: daysAgo(5),
     amount: 1240.0,
@@ -97,6 +130,7 @@ export const SEED_EXPENSES: Expense[] = [
   {
     id: "e-4",
     project_id: "p-lakeview",
+    submission_id: "s-lakeview-initial-materials",
     vendor: "Chipotle",
     expense_date: daysAgo(5),
     amount: 38.74,
@@ -109,6 +143,7 @@ export const SEED_EXPENSES: Expense[] = [
   {
     id: "e-5",
     project_id: "p-warehouse",
+    submission_id: "s-warehouse-final-materials",
     vendor: "Grainger",
     expense_date: daysAgo(32),
     amount: 3185.9,
@@ -121,6 +156,7 @@ export const SEED_EXPENSES: Expense[] = [
   {
     id: "e-6",
     project_id: "p-warehouse",
+    submission_id: "s-warehouse-final-materials",
     vendor: "Hampton Inn",
     expense_date: daysAgo(34),
     amount: 276.0,
@@ -133,6 +169,7 @@ export const SEED_EXPENSES: Expense[] = [
   {
     id: "e-7",
     project_id: "p-riverside",
+    submission_id: "s-riverside-expense-bom",
     vendor: "UPS Store",
     expense_date: daysAgo(10),
     amount: 42.3,
@@ -145,6 +182,7 @@ export const SEED_EXPENSES: Expense[] = [
   {
     id: "e-8",
     project_id: "p-lakeview",
+    submission_id: "s-lakeview-initial-materials",
     vendor: "Enterprise",
     expense_date: daysAgo(8),
     amount: 189.99,

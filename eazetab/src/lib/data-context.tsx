@@ -15,8 +15,15 @@ import type {
   ExpenseInput,
   Project,
   ProjectInput,
+  Submission,
+  SubmissionInput,
 } from "@/lib/types";
-import { SEED_COMPANIES, SEED_EXPENSES, SEED_PROJECTS } from "@/lib/mock-data";
+import {
+  SEED_COMPANIES,
+  SEED_EXPENSES,
+  SEED_PROJECTS,
+  SEED_SUBMISSIONS,
+} from "@/lib/mock-data";
 import { deleteReceipt } from "@/lib/receipt-store";
 
 /**
@@ -32,6 +39,7 @@ const STORAGE_KEY = "eazetab-data-v1";
 type StoredData = {
   companies: Company[];
   projects: Project[];
+  submissions: Submission[];
   expenses: Expense[];
 };
 
@@ -40,6 +48,7 @@ type DataContextValue = {
   hydrated: boolean;
   companies: Company[];
   projects: Project[];
+  submissions: Submission[];
   expenses: Expense[];
   addCompany: (input: CompanyInput) => Company;
   updateCompany: (id: string, input: CompanyInput) => void;
@@ -47,6 +56,7 @@ type DataContextValue = {
   addProject: (input: ProjectInput) => Project;
   updateProject: (id: string, input: ProjectInput) => void;
   deleteProject: (id: string) => Promise<void>;
+  addSubmission: (input: SubmissionInput) => Submission;
   addExpense: (input: ExpenseInput) => Expense;
   deleteExpense: (id: string) => Promise<void>;
 };
@@ -81,6 +91,40 @@ function normalizeData(parsed: Partial<StoredData>): StoredData {
         }))
     : SEED_PROJECTS;
   const projectIds = new Set(projects.map((p) => p.id));
+  const parsedSubmissions = Array.isArray(parsed.submissions)
+    ? parsed.submissions
+        .filter(
+          (submission): submission is Submission =>
+            typeof submission?.id === "string" &&
+            typeof submission?.project_id === "string" &&
+            typeof submission?.submission_name === "string" &&
+            projectIds.has(submission.project_id)
+        )
+        .map((submission): Submission => ({
+          ...submission,
+          submitted_at:
+            typeof submission.submitted_at === "string"
+              ? submission.submitted_at
+              : submission.created_at,
+          status: submission.status === "Closed" ? "Closed" : "Open",
+          notes: submission.notes ?? null,
+        }))
+    : [];
+  const submissions =
+    parsedSubmissions.length > 0
+      ? parsedSubmissions
+      : Array.isArray(parsed.submissions)
+        ? []
+        : SEED_SUBMISSIONS.filter((submission) =>
+            projectIds.has(submission.project_id)
+          );
+  const submissionsByProject = new Map<string, Submission>();
+  for (const submission of submissions) {
+    if (!submissionsByProject.has(submission.project_id)) {
+      submissionsByProject.set(submission.project_id, submission);
+    }
+  }
+  const submissionIds = new Set(submissions.map((submission) => submission.id));
   const expenses = Array.isArray(parsed.expenses)
     ? parsed.expenses
         .filter(
@@ -91,11 +135,45 @@ function normalizeData(parsed: Partial<StoredData>): StoredData {
         )
         .map((expense) => ({
           ...expense,
+          submission_id:
+            typeof expense.submission_id === "string" &&
+            submissionIds.has(expense.submission_id)
+              ? expense.submission_id
+              : getMigrationSubmission(
+                  expense.project_id,
+                  submissions,
+                  submissionsByProject,
+                  submissionIds
+                ).id,
           custom_category: expense.custom_category ?? null,
         }))
     : SEED_EXPENSES;
 
-  return { companies, projects, expenses };
+  return { companies, projects, submissions, expenses };
+}
+
+function getMigrationSubmission(
+  projectId: string,
+  submissions: Submission[],
+  submissionsByProject: Map<string, Submission>,
+  submissionIds: Set<string>
+): Submission {
+  const existing = submissionsByProject.get(projectId);
+  if (existing) return existing;
+
+  const submission: Submission = {
+    id: `migration-${projectId}`,
+    project_id: projectId,
+    submission_name: "Migrated Expenses",
+    submitted_at: new Date().toISOString().slice(0, 10),
+    status: "Open",
+    notes: "Created automatically for expenses saved before submissions existed.",
+    created_at: new Date().toISOString(),
+  };
+  submissions.push(submission);
+  submissionsByProject.set(projectId, submission);
+  submissionIds.add(submission.id);
+  return submission;
 }
 
 function loadData(): StoredData {
@@ -113,6 +191,7 @@ function loadData(): StoredData {
   return {
     companies: SEED_COMPANIES,
     projects: SEED_PROJECTS,
+    submissions: SEED_SUBMISSIONS,
     expenses: SEED_EXPENSES,
   };
 }
@@ -122,6 +201,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [data, setData] = useState<StoredData>({
     companies: [],
     projects: [],
+    submissions: [],
     expenses: [],
   });
 
@@ -172,6 +252,22 @@ export function DataProvider({ children }: { children: ReactNode }) {
     }));
   }, []);
 
+  const addSubmission = useCallback(
+    (input: SubmissionInput): Submission => {
+      const submission: Submission = {
+        ...input,
+        id: crypto.randomUUID(),
+        created_at: new Date().toISOString(),
+      };
+      setData((d) => ({
+        ...d,
+        submissions: [submission, ...d.submissions],
+      }));
+      return submission;
+    },
+    []
+  );
+
   const addExpense = useCallback((input: ExpenseInput): Expense => {
     const expense: Expense = {
       ...input,
@@ -200,6 +296,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
       return {
         companies: d.companies.filter((c) => c.id !== id),
         projects: d.projects.filter((p) => p.company_id !== id),
+        submissions: d.submissions.filter((submission) =>
+          !projectIds.has(submission.project_id)
+        ),
         expenses: d.expenses.filter((e) => !projectIds.has(e.project_id)),
       };
     });
@@ -220,6 +319,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
       return {
         ...d,
         projects: d.projects.filter((p) => p.id !== id),
+        submissions: d.submissions.filter(
+          (submission) => submission.project_id !== id
+        ),
         expenses: d.expenses.filter((e) => e.project_id !== id),
       };
     });
@@ -253,6 +355,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         hydrated,
         companies: data.companies,
         projects: data.projects,
+        submissions: data.submissions,
         expenses: data.expenses,
         addCompany,
         updateCompany,
@@ -260,6 +363,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         addProject,
         updateProject,
         deleteProject,
+        addSubmission,
         addExpense,
         deleteExpense,
       }}

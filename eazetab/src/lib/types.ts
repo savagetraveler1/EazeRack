@@ -1,6 +1,9 @@
 export const PROJECT_STATUSES = ["active", "completed"] as const;
 export type ProjectStatus = (typeof PROJECT_STATUSES)[number];
 
+export const SUBMISSION_STATUSES = ["Open", "Closed"] as const;
+export type SubmissionStatus = (typeof SUBMISSION_STATUSES)[number];
+
 export const EXPENSE_CATEGORIES = [
   "Materials",
   "Fuel",
@@ -28,9 +31,20 @@ export type Project = {
   created_at: string;
 };
 
+export type Submission = {
+  id: string;
+  project_id: string;
+  submission_name: string;
+  submitted_at: string;
+  status: SubmissionStatus;
+  notes: string | null;
+  created_at: string;
+};
+
 export type Expense = {
   id: string;
   project_id: string;
+  submission_id: string;
   vendor: string;
   expense_date: string;
   amount: number;
@@ -50,4 +64,5 @@ export type ExpenseWithProject = Expense & {
 
 export type CompanyInput = Omit<Company, "id" | "created_at">;
 export type ProjectInput = Omit<Project, "id" | "created_at">;
+export type SubmissionInput = Omit<Submission, "id" | "created_at">;
 export type ExpenseInput = Omit<Expense, "id" | "created_at">;
