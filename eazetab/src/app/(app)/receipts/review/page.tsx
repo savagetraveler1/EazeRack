@@ -14,15 +14,27 @@ import {
   EXPENSE_CATEGORIES,
   type ExpenseCategory,
 } from "@/lib/types";
+import { todayISO } from "@/lib/format";
 import {
   clearDraft,
   loadDraft,
   saveDraft,
   type ExpenseDraft,
 } from "@/lib/draft-store";
-import { deleteReceipt, saveReceipt } from "@/lib/receipt-store";
+import { deleteReceipt, getReceipt, saveReceipt } from "@/lib/receipt-store";
+import { scanReceiptImage, type OcrSuggestions } from "@/lib/ocr";
 import { ReceiptPreview } from "@/components/receipt-preview";
+import { OcrBadge } from "@/components/ocr-badge";
 import { PageSkeleton } from "@/components/page-skeleton";
+
+type OcrField = "vendor" | "expense_date" | "amount" | "category";
+type OcrStatus =
+  | "idle"
+  | "scanning"
+  | "ready"
+  | "empty"
+  | "unavailable"
+  | "error";
 
 const MAX_RECEIPT_BYTES = 10 * 1024 * 1024; // 10 MB
 const ACCEPTED_RECEIPT_TYPES = ["image/", "application/pdf"];
@@ -39,20 +51,108 @@ export default function ReviewReceiptsPage() {
   const [amountText, setAmountText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [ocrStatus, setOcrStatus] = useState<OcrStatus>("idle");
+  const [ocrSuggestions, setOcrSuggestions] = useState<OcrSuggestions | null>(
+    null
+  );
+  const [ocrApplied, setOcrApplied] = useState<Set<OcrField>>(new Set());
   const replaceInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const stored = loadDraft();
     setDraft(stored);
-    setAmountText(stored ? String(stored.amount) : "");
+    setAmountText(stored?.amount ? String(stored.amount) : "");
     setDraftLoaded(true);
   }, []);
+
+  useEffect(() => {
+    if (!draft?.receipt_url) {
+      setOcrStatus("idle");
+      setOcrSuggestions(null);
+      setOcrApplied(new Set());
+      return;
+    }
+
+    if (draft.receipt_type === "application/pdf") {
+      setOcrStatus("unavailable");
+      setOcrSuggestions(null);
+      setOcrApplied(new Set());
+      return;
+    }
+
+    if (!draft.receipt_type?.startsWith("image/")) {
+      setOcrStatus("idle");
+      return;
+    }
+
+    let cancelled = false;
+    setOcrStatus("scanning");
+    setOcrSuggestions(null);
+    setOcrApplied(new Set());
+
+    (async () => {
+      try {
+        const receipt = await getReceipt(draft.receipt_url!);
+        if (cancelled) return;
+        if (!receipt) {
+          setOcrStatus("error");
+          return;
+        }
+
+        const { suggestions } = await scanReceiptImage(receipt.blob);
+        if (cancelled) return;
+
+        const patch: Partial<ExpenseDraft> = {};
+        const applied = new Set<OcrField>();
+
+        if (suggestions.vendor) {
+          patch.vendor = suggestions.vendor;
+          applied.add("vendor");
+        }
+        if (suggestions.expense_date) {
+          patch.expense_date = suggestions.expense_date;
+          applied.add("expense_date");
+        }
+        if (suggestions.amount !== null) {
+          patch.amount = suggestions.amount;
+          setAmountText(String(suggestions.amount));
+          applied.add("amount");
+        }
+        if (suggestions.category) {
+          patch.category = suggestions.category;
+          patch.custom_category = null;
+          applied.add("category");
+        }
+
+        if (applied.size > 0) {
+          updateDraft(patch);
+        }
+        setOcrSuggestions(suggestions);
+        setOcrApplied(applied);
+        setOcrStatus(applied.size > 0 ? "ready" : "empty");
+      } catch {
+        if (!cancelled) setOcrStatus("error");
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [draft?.receipt_url, draft?.receipt_type]);
 
   function updateDraft(patch: Partial<ExpenseDraft>) {
     setDraft((d) => {
       if (!d) return d;
       const next = { ...d, ...patch };
       saveDraft(next);
+      return next;
+    });
+  }
+
+  function clearOcrField(field: OcrField) {
+    setOcrApplied((prev) => {
+      const next = new Set(prev);
+      next.delete(field);
       return next;
     });
   }
@@ -83,25 +183,20 @@ export default function ReviewReceiptsPage() {
         receipt_url: newUrl,
         receipt_name: file.name,
         receipt_type: file.type,
+        vendor: "",
+        expense_date: todayISO(),
+        amount: 0,
+        category: "Materials",
+        custom_category: null,
       });
+      setAmountText("");
+      setOcrApplied(new Set());
     } catch {
       setError("Could not save the new receipt file.");
     } finally {
       setBusy(false);
       e.target.value = "";
     }
-  }
-
-  async function handleRemoveReceipt() {
-    if (!draft?.receipt_url) return;
-    setBusy(true);
-    try {
-      await deleteReceipt(draft.receipt_url);
-    } catch {
-      // Blob may already be gone; the reference removal below is what matters.
-    }
-    updateDraft({ receipt_url: null, receipt_name: null, receipt_type: null });
-    setBusy(false);
   }
 
   async function handleDiscard() {
@@ -129,6 +224,10 @@ export default function ReviewReceiptsPage() {
     }
     if (!draft.project_id) {
       setError("Select a project.");
+      return;
+    }
+    if (!draft.vendor.trim()) {
+      setError("Enter a vendor.");
       return;
     }
     if (draft.category === "Other" && !draft.custom_category?.trim()) {
@@ -163,15 +262,25 @@ export default function ReviewReceiptsPage() {
     return <EmptyReviewState />;
   }
 
+  const selectedProject = projects.find(
+    (project) => project.id === draft.project_id
+  );
+
   return (
     <div>
       <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-        Review Receipt
+        Review Scanned Receipt
       </h1>
       <p className="mt-1 text-sm text-slate-500">
-        Check the receipt and expense details, then approve to put it on the
-        project&apos;s tab.
+        OCR filled what it could. Verify or correct the fields, then save the
+        expense.
       </p>
+
+      <OcrStatusBanner
+        status={ocrStatus}
+        suggestions={ocrSuggestions}
+        applied={ocrApplied}
+      />
 
       <form
         onSubmit={handleApprove}
@@ -190,16 +299,6 @@ export default function ReviewReceiptsPage() {
               >
                 Replace
               </button>
-              {draft.receipt_url && (
-                <button
-                  type="button"
-                  onClick={handleRemoveReceipt}
-                  disabled={busy}
-                  className="text-xs font-medium text-red-600 hover:underline disabled:opacity-60"
-                >
-                  Remove
-                </button>
-              )}
             </div>
           </div>
           <input
@@ -239,32 +338,18 @@ export default function ReviewReceiptsPage() {
         {/* Details side */}
         <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <h2 className="mb-4 text-sm font-semibold text-slate-900">
-            Expense Details
+            Verify Expense Details
           </h2>
           <div className="space-y-4">
-            <div>
-              <label
-                htmlFor="project"
-                className="mb-1.5 block text-sm font-medium text-slate-700"
-              >
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3 text-sm">
+              <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
                 Project
-              </label>
-              <select
-                id="project"
-                required
-                value={draft.project_id}
-                onChange={(e) => updateDraft({ project_id: e.target.value })}
-                className={inputClass}
-              >
-                <option value="" disabled>
-                  Select a project...
-                </option>
-                {projects.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.project_name} — {p.client_name}
-                  </option>
-                ))}
-              </select>
+              </p>
+              <p className="mt-1 font-medium text-slate-800">
+                {selectedProject
+                  ? `${selectedProject.project_name} — ${selectedProject.client_name}`
+                  : "Selected project"}
+              </p>
             </div>
 
             <div>
@@ -273,13 +358,17 @@ export default function ReviewReceiptsPage() {
                 className="mb-1.5 block text-sm font-medium text-slate-700"
               >
                 Vendor
+                {ocrApplied.has("vendor") && <OcrBadge />}
               </label>
               <input
                 id="vendor"
                 type="text"
                 required
                 value={draft.vendor}
-                onChange={(e) => updateDraft({ vendor: e.target.value })}
+                onChange={(e) => {
+                  clearOcrField("vendor");
+                  updateDraft({ vendor: e.target.value });
+                }}
                 className={inputClass}
               />
             </div>
@@ -291,15 +380,17 @@ export default function ReviewReceiptsPage() {
                   className="mb-1.5 block text-sm font-medium text-slate-700"
                 >
                   Expense Date
+                  {ocrApplied.has("expense_date") && <OcrBadge />}
                 </label>
                 <input
                   id="expense_date"
                   type="date"
                   required
                   value={draft.expense_date}
-                  onChange={(e) =>
-                    updateDraft({ expense_date: e.target.value })
-                  }
+                  onChange={(e) => {
+                    clearOcrField("expense_date");
+                    updateDraft({ expense_date: e.target.value });
+                  }}
                   className={inputClass}
                 />
               </div>
@@ -310,6 +401,7 @@ export default function ReviewReceiptsPage() {
                   className="mb-1.5 block text-sm font-medium text-slate-700"
                 >
                   Amount
+                  {ocrApplied.has("amount") && <OcrBadge />}
                 </label>
                 <div className="relative">
                   <span className="pointer-events-none absolute inset-y-0 left-3.5 flex items-center text-sm text-slate-400">
@@ -324,6 +416,7 @@ export default function ReviewReceiptsPage() {
                     inputMode="decimal"
                     value={amountText}
                     onChange={(e) => {
+                      clearOcrField("amount");
                       setAmountText(e.target.value);
                       const parsed = Number.parseFloat(e.target.value);
                       if (Number.isFinite(parsed)) {
@@ -342,6 +435,7 @@ export default function ReviewReceiptsPage() {
                 className="mb-1.5 block text-sm font-medium text-slate-700"
               >
                 Category
+                {ocrApplied.has("category") && <OcrBadge />}
               </label>
               <select
                 id="category"
@@ -349,6 +443,7 @@ export default function ReviewReceiptsPage() {
                 value={draft.category}
                 onChange={(e) => {
                   const nextCategory = e.target.value as ExpenseCategory;
+                  clearOcrField("category");
                   updateDraft({
                     category: nextCategory,
                     custom_category:
@@ -428,7 +523,7 @@ export default function ReviewReceiptsPage() {
               disabled={busy}
               className="rounded-lg bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Approve &amp; Save
+              Save Expense
             </button>
           </div>
         </div>
@@ -437,21 +532,89 @@ export default function ReviewReceiptsPage() {
   );
 }
 
+function OcrStatusBanner({
+  status,
+  suggestions,
+  applied,
+}: {
+  status: OcrStatus;
+  suggestions: OcrSuggestions | null;
+  applied: Set<OcrField>;
+}) {
+  if (status === "idle") return null;
+
+  if (status === "scanning") {
+    return (
+      <div className="mt-6 flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+        <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-amber-600 border-t-transparent" />
+        Reading receipt with OCR...
+      </div>
+    );
+  }
+
+  if (status === "unavailable") {
+    return (
+      <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+        OCR runs on image receipts right now. This receipt is attached, so enter
+        the visible vendor, date, total amount, and category manually.
+      </div>
+    );
+  }
+
+  if (status === "error" || status === "empty") {
+    return (
+      <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+        OCR could not read this receipt clearly. Enter or correct the values
+        below before saving.
+      </div>
+    );
+  }
+
+  const filled = Array.from(applied).map(fieldLabel).join(", ");
+
+  return (
+    <div className="mt-6 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+      <p className="font-medium">OCR populated {filled || "receipt fields"}.</p>
+      <p className="mt-1 text-xs text-emerald-700">
+        Please verify the values. OCR can misread receipts.
+      </p>
+      {suggestions?.amount !== null && suggestions?.amount !== undefined && (
+        <p className="mt-1 text-xs text-emerald-700">
+          Detected total: ${suggestions.amount.toFixed(2)}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function fieldLabel(field: OcrField): string {
+  switch (field) {
+    case "expense_date":
+      return "date";
+    case "amount":
+      return "amount";
+    case "category":
+      return "category";
+    case "vendor":
+      return "vendor";
+  }
+}
+
 const PIPELINE_STEPS = [
+  {
+    title: "Choose company and project",
+    description:
+      "Start by choosing where the expense belongs.",
+  },
   {
     title: "Attach a receipt",
     description:
-      "Add an expense with a receipt file and it comes here for review before saving.",
+      "Image receipts are scanned locally for vendor, date, total amount, and category.",
   },
   {
-    title: "OCR scan (coming soon)",
+    title: "Review and save",
     description:
-      "EazeTab will read the vendor, date, and amount off the receipt automatically.",
-  },
-  {
-    title: "Review & approve",
-    description:
-      "Confirm the details, fix anything that's off, and post it to the project tab.",
+      "Verify the OCR-filled values, correct anything off, and save the expense.",
   },
   {
     title: "Synced to Google Sheets (coming soon)",
