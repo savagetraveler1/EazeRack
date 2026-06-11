@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { useData } from "@/lib/data-context";
 import type { Company } from "@/lib/types";
 import { ConfirmDialog } from "@/components/confirm-dialog";
@@ -10,15 +11,19 @@ export function DeleteCompanyButton({
   projectCount,
   expenseCount,
   receiptCount,
+  redirectTo,
   className = "rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-700 transition hover:bg-red-50",
 }: {
   company: Company;
   projectCount: number;
   expenseCount: number;
   receiptCount: number;
+  /** Navigate here after a successful delete (e.g. when on the company detail page). */
+  redirectTo?: string;
   className?: string;
 }) {
   const { deleteCompany } = useData();
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
 
@@ -27,6 +32,9 @@ export function DeleteCompanyButton({
     try {
       await deleteCompany(company.id);
       setOpen(false);
+      if (redirectTo) {
+        router.push(redirectTo);
+      }
     } finally {
       setLoading(false);
     }

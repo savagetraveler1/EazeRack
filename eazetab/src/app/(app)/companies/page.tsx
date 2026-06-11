@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useData } from "@/lib/data-context";
-import { formatCurrency, formatDate } from "@/lib/format";
+import { formatCurrency } from "@/lib/format";
 import { isLocalReceipt } from "@/lib/receipt-store";
 import { CompanyFormModal } from "@/components/company-form-modal";
 import { DeleteCompanyButton } from "@/components/delete-company-button";
@@ -79,7 +79,7 @@ export default function CompaniesPage() {
           </p>
         </div>
       ) : (
-        <div className="mt-8 grid grid-cols-1 gap-5 xl:grid-cols-2">
+        <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {sortedCompanies.map((company) => {
             const companyStats = stats.get(company.id) ?? {
               projectCount: 0,
@@ -87,45 +87,27 @@ export default function CompaniesPage() {
               receiptCount: 0,
               total: 0,
             };
-            const companyProjects = projects
-              .filter((project) => project.company_id === company.id)
-              .sort((a, b) => a.project_name.localeCompare(b.project_name));
-
             return (
               <div
                 key={company.id}
-                className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"
+                className="group relative rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-emerald-300 hover:shadow-md"
               >
-                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="min-w-0">
-                    <h2 className="truncate text-base font-semibold text-slate-900">
-                      {company.company_name}
-                    </h2>
-                    <p className="mt-1 text-sm text-slate-500">
-                      Created {formatDate(company.created_at)}
-                    </p>
-                    {company.notes && (
-                      <p className="mt-3 text-sm text-slate-500">
-                        {company.notes}
-                      </p>
-                    )}
-                  </div>
-                  <div className="flex shrink-0 flex-wrap gap-2">
-                    <CompanyFormModal
-                      company={company}
-                      trigger={<>Edit</>}
-                      triggerClassName="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50"
-                    />
-                    <DeleteCompanyButton
-                      company={company}
-                      projectCount={companyStats.projectCount}
-                      expenseCount={companyStats.expenseCount}
-                      receiptCount={companyStats.receiptCount}
-                    />
-                  </div>
+                <Link
+                  href={`/companies/${company.id}`}
+                  aria-label={`Open ${company.company_name}`}
+                  className="absolute inset-0 rounded-2xl"
+                />
+
+                <div className="relative flex items-start justify-between gap-3">
+                  <h2 className="min-w-0 truncate text-base font-semibold text-slate-900 group-hover:text-emerald-700">
+                    {company.company_name}
+                  </h2>
+                  <span className="shrink-0 text-xs font-medium text-emerald-700">
+                    View →
+                  </span>
                 </div>
 
-                <div className="mt-5 grid grid-cols-3 gap-3 border-t border-slate-100 pt-4">
+                <div className="relative mt-4 grid grid-cols-3 gap-3 border-t border-slate-100 pt-4">
                   <div>
                     <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
                       Projects
@@ -152,24 +134,19 @@ export default function CompaniesPage() {
                   </div>
                 </div>
 
-                {companyProjects.length > 0 && (
-                  <div className="mt-5">
-                    <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
-                      Projects
-                    </p>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {companyProjects.map((project) => (
-                        <Link
-                          key={project.id}
-                          href={`/projects/${project.id}`}
-                          className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 transition hover:bg-emerald-50 hover:text-emerald-700"
-                        >
-                          {project.project_name}
-                        </Link>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                <div className="relative z-10 mt-5 flex justify-end gap-2">
+                  <CompanyFormModal
+                    company={company}
+                    trigger={<>Edit</>}
+                    triggerClassName="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50"
+                  />
+                  <DeleteCompanyButton
+                    company={company}
+                    projectCount={companyStats.projectCount}
+                    expenseCount={companyStats.expenseCount}
+                    receiptCount={companyStats.receiptCount}
+                  />
+                </div>
               </div>
             );
           })}
