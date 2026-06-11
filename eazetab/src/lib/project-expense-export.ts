@@ -1,4 +1,5 @@
 import type { Company, Expense, Project } from "@/lib/types";
+import { expenseCategoryLabel } from "@/lib/expense-category";
 
 const CSV_HEADERS = [
   "Company",
@@ -27,7 +28,7 @@ export function buildProjectExpensesCsv({
     project.client_name,
     expense.expense_date,
     expense.vendor,
-    expense.category,
+    expenseCategoryLabel(expense),
     expense.amount.toFixed(2),
     expense.notes ?? "",
     expense.receipt_url ?? "",

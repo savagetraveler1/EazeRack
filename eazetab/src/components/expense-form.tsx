@@ -19,19 +19,24 @@ const ACCEPTED_RECEIPT_TYPES = ["image/", "application/pdf"];
 
 const inputClass =
   "w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20";
-const CREATE_PROJECT_VALUE = "__create_project__";
 const CREATE_COMPANY_VALUE = "__create_company__";
+const CREATE_PROJECT_VALUE = "__create_project__";
 
 const STATUS_LABELS: Record<ProjectStatus, string> = {
   active: "Active",
   completed: "Completed",
 };
 
+type ExpenseProjectOption = Pick<
+  Project,
+  "id" | "company_id" | "project_name" | "client_name"
+>;
+
 export function ExpenseForm({
   projects,
   defaultProjectId,
 }: {
-  projects: Pick<Project, "id" | "project_name" | "client_name">[];
+  projects: ExpenseProjectOption[];
   defaultProjectId?: string;
 }) {
   const router = useRouter();
@@ -39,22 +44,23 @@ export function ExpenseForm({
   const sortedCompanies = [...companies].sort((a, b) =>
     a.company_name.localeCompare(b.company_name)
   );
+  const defaultProject = defaultProjectId
+    ? projects.find((p) => p.id === defaultProjectId)
+    : null;
 
-  const [projectId, setProjectId] = useState(
-    defaultProjectId && projects.some((p) => p.id === defaultProjectId)
-      ? defaultProjectId
-      : ""
-  );
+  const [companyId, setCompanyId] = useState(defaultProject?.company_id ?? "");
+  const [projectId, setProjectId] = useState(defaultProject?.id ?? "");
   const [vendor, setVendor] = useState("");
   const [expenseDate, setExpenseDate] = useState(todayISO());
   const [amount, setAmount] = useState("");
   const [category, setCategory] = useState<ExpenseCategory>("Materials");
+  const [customCategory, setCustomCategory] = useState("");
   const [notes, setNotes] = useState("");
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [companyModalOpen, setCompanyModalOpen] = useState(false);
   const [projectModalOpen, setProjectModalOpen] = useState(false);
-  const [newProjectCompanyId, setNewProjectCompanyId] = useState("");
   const [newCompanyName, setNewCompanyName] = useState("");
   const [newCompanyNotes, setNewCompanyNotes] = useState("");
   const [newProjectName, setNewProjectName] = useState("");
@@ -63,14 +69,33 @@ export function ExpenseForm({
     useState<ProjectStatus>("active");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  function openProjectModal() {
-    setNewProjectCompanyId(sortedCompanies[0]?.id ?? CREATE_COMPANY_VALUE);
+  const filteredProjects = projects
+    .filter((project) => project.company_id === companyId)
+    .sort((a, b) => a.project_name.localeCompare(b.project_name));
+
+  function openCompanyModal() {
     setNewCompanyName("");
     setNewCompanyNotes("");
+    setCompanyModalOpen(true);
+  }
+
+  function openProjectModal() {
     setNewProjectName("");
     setNewProjectClientName("");
     setNewProjectStatus("active");
     setProjectModalOpen(true);
+  }
+
+  function handleCompanyChange(value: string) {
+    if (value === CREATE_COMPANY_VALUE) {
+      openCompanyModal();
+      return;
+    }
+
+    setCompanyId(value);
+    if (!projects.some((p) => p.id === projectId && p.company_id === value)) {
+      setProjectId("");
+    }
   }
 
   function handleProjectChange(value: string) {
@@ -81,16 +106,19 @@ export function ExpenseForm({
     setProjectId(value);
   }
 
+  function handleCreateCompany(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const company = addCompany({
+      company_name: newCompanyName.trim(),
+      notes: newCompanyNotes.trim() || null,
+    });
+    setCompanyId(company.id);
+    setProjectId("");
+    setCompanyModalOpen(false);
+  }
+
   function handleCreateProject(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    const companyId =
-      newProjectCompanyId === CREATE_COMPANY_VALUE
-        ? addCompany({
-            company_name: newCompanyName.trim(),
-            notes: newCompanyNotes.trim() || null,
-          }).id
-        : newProjectCompanyId;
-
     const project = addProject({
       company_id: companyId,
       project_name: newProjectName.trim(),
@@ -139,6 +167,10 @@ export function ExpenseForm({
       setError("Enter an amount greater than zero.");
       return;
     }
+    if (category === "Other" && !customCategory.trim()) {
+      setError("Enter a custom category.");
+      return;
+    }
 
     setSaving(true);
     const values = {
@@ -147,6 +179,7 @@ export function ExpenseForm({
       expense_date: expenseDate,
       amount: Math.round(parsedAmount * 100) / 100,
       category,
+      custom_category: category === "Other" ? customCategory.trim() : null,
       notes: notes.trim() || null,
     };
 
@@ -182,171 +215,230 @@ export function ExpenseForm({
         className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8"
       >
         <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-        <div className="sm:col-span-2">
-          <label
-            htmlFor="project"
-            className="mb-1.5 block text-sm font-medium text-slate-700"
-          >
-            Project
-          </label>
-          <select
-            id="project"
-            required
-            value={projectId}
-            onChange={(e) => handleProjectChange(e.target.value)}
-            className={inputClass}
-          >
-            <option value="" disabled>
-              Select a project...
-            </option>
-            <option value={CREATE_PROJECT_VALUE}>+ Create New Project</option>
-            {projects.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.project_name} — {p.client_name}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div>
-          <label
-            htmlFor="vendor"
-            className="mb-1.5 block text-sm font-medium text-slate-700"
-          >
-            Vendor
-          </label>
-          <input
-            id="vendor"
-            type="text"
-            required
-            value={vendor}
-            onChange={(e) => setVendor(e.target.value)}
-            placeholder="e.g. Home Depot"
-            className={inputClass}
-          />
-        </div>
-
-        <div>
-          <label
-            htmlFor="expense_date"
-            className="mb-1.5 block text-sm font-medium text-slate-700"
-          >
-            Expense Date
-          </label>
-          <input
-            id="expense_date"
-            type="date"
-            required
-            value={expenseDate}
-            onChange={(e) => setExpenseDate(e.target.value)}
-            className={inputClass}
-          />
-        </div>
-
-        <div>
-          <label
-            htmlFor="amount"
-            className="mb-1.5 block text-sm font-medium text-slate-700"
-          >
-            Amount
-          </label>
-          <div className="relative">
-            <span className="pointer-events-none absolute inset-y-0 left-3.5 flex items-center text-sm text-slate-400">
-              $
-            </span>
-            <input
-              id="amount"
-              type="number"
+          <div className="sm:col-span-2">
+            <label
+              htmlFor="company"
+              className="mb-1.5 block text-sm font-medium text-slate-700"
+            >
+              Company
+            </label>
+            <select
+              id="company"
               required
-              min="0.01"
-              step="0.01"
-              inputMode="decimal"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              placeholder="0.00"
-              className={`${inputClass} pl-7`}
+              value={companyId}
+              onChange={(e) => handleCompanyChange(e.target.value)}
+              className={inputClass}
+            >
+              <option value="" disabled>
+                Select a company...
+              </option>
+              <option value={CREATE_COMPANY_VALUE}>+ Create New Company</option>
+              {sortedCompanies.map((company) => (
+                <option key={company.id} value={company.id}>
+                  {company.company_name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="sm:col-span-2">
+            <label
+              htmlFor="project"
+              className="mb-1.5 block text-sm font-medium text-slate-700"
+            >
+              Project
+            </label>
+            <select
+              id="project"
+              required
+              disabled={!companyId}
+              value={projectId}
+              onChange={(e) => handleProjectChange(e.target.value)}
+              className={inputClass}
+            >
+              <option value="" disabled>
+                {companyId
+                  ? "Select a project..."
+                  : "Select a company first..."}
+              </option>
+              {companyId && (
+                <option value={CREATE_PROJECT_VALUE}>
+                  + Create New Project
+                </option>
+              )}
+              {filteredProjects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.project_name} — {project.client_name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label
+              htmlFor="vendor"
+              className="mb-1.5 block text-sm font-medium text-slate-700"
+            >
+              Vendor
+            </label>
+            <input
+              id="vendor"
+              type="text"
+              required
+              value={vendor}
+              onChange={(e) => setVendor(e.target.value)}
+              placeholder="e.g. Home Depot"
+              className={inputClass}
             />
           </div>
-        </div>
 
-        <div>
-          <label
-            htmlFor="category"
-            className="mb-1.5 block text-sm font-medium text-slate-700"
-          >
-            Category
-          </label>
-          <select
-            id="category"
-            required
-            value={category}
-            onChange={(e) => setCategory(e.target.value as ExpenseCategory)}
-            className={inputClass}
-          >
-            {EXPENSE_CATEGORIES.map((c) => (
-              <option key={c} value={c}>
-                {c}
-              </option>
-            ))}
-          </select>
-        </div>
+          <div>
+            <label
+              htmlFor="expense_date"
+              className="mb-1.5 block text-sm font-medium text-slate-700"
+            >
+              Expense Date
+            </label>
+            <input
+              id="expense_date"
+              type="date"
+              required
+              value={expenseDate}
+              onChange={(e) => setExpenseDate(e.target.value)}
+              className={inputClass}
+            />
+          </div>
 
-        <div className="sm:col-span-2">
-          <label
-            htmlFor="receipt"
-            className="mb-1.5 block text-sm font-medium text-slate-700"
-          >
-            Receipt{" "}
-            <span className="font-normal text-slate-400">(optional)</span>
-          </label>
-          <input
-            ref={fileInputRef}
-            id="receipt"
-            type="file"
-            accept="image/*,application/pdf"
-            onChange={handleFileChange}
-            className="block w-full cursor-pointer rounded-lg border border-slate-300 text-sm text-slate-500 file:mr-4 file:cursor-pointer file:rounded-l-lg file:border-0 file:bg-slate-100 file:px-4 file:py-2.5 file:text-sm file:font-medium file:text-slate-700 hover:file:bg-slate-200"
-          />
-          {receiptFile && (
-            <div className="mt-2 flex items-center justify-between rounded-lg bg-emerald-50 px-3.5 py-2 text-sm">
-              <span className="truncate text-emerald-800">
-                {receiptFile.name}{" "}
-                <span className="text-emerald-600">
-                  ({(receiptFile.size / 1024).toFixed(0)} KB)
-                </span>
+          <div>
+            <label
+              htmlFor="amount"
+              className="mb-1.5 block text-sm font-medium text-slate-700"
+            >
+              Amount
+            </label>
+            <div className="relative">
+              <span className="pointer-events-none absolute inset-y-0 left-3.5 flex items-center text-sm text-slate-400">
+                $
               </span>
-              <button
-                type="button"
-                onClick={clearReceipt}
-                className="ml-3 shrink-0 text-xs font-medium text-emerald-700 hover:underline"
-              >
-                Remove
-              </button>
+              <input
+                id="amount"
+                type="number"
+                required
+                min="0.01"
+                step="0.01"
+                inputMode="decimal"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                placeholder="0.00"
+                className={`${inputClass} pl-7`}
+              />
             </div>
-          )}
-          <p className="mt-1.5 text-xs text-slate-400">
-            Image or PDF, up to 10 MB. With a receipt attached, you&apos;ll
-            review everything before the expense is saved. Stored locally in
-            this browser for the MVP — Google Drive storage comes later.
-          </p>
-        </div>
+          </div>
 
-        <div className="sm:col-span-2">
-          <label
-            htmlFor="notes"
-            className="mb-1.5 block text-sm font-medium text-slate-700"
-          >
-            Notes <span className="font-normal text-slate-400">(optional)</span>
-          </label>
-          <textarea
-            id="notes"
-            rows={3}
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            placeholder="Anything worth remembering about this expense..."
-            className={inputClass}
-          />
-        </div>
+          <div>
+            <label
+              htmlFor="category"
+              className="mb-1.5 block text-sm font-medium text-slate-700"
+            >
+              Category
+            </label>
+            <select
+              id="category"
+              required
+              value={category}
+              onChange={(e) => {
+                const nextCategory = e.target.value as ExpenseCategory;
+                setCategory(nextCategory);
+                if (nextCategory !== "Other") {
+                  setCustomCategory("");
+                }
+              }}
+              className={inputClass}
+            >
+              {EXPENSE_CATEGORIES.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+            {category === "Other" && (
+              <div className="mt-4">
+                <label
+                  htmlFor="custom_category"
+                  className="mb-1.5 block text-sm font-medium text-slate-700"
+                >
+                  Custom Category
+                </label>
+                <input
+                  id="custom_category"
+                  type="text"
+                  required
+                  value={customCategory}
+                  onChange={(e) => setCustomCategory(e.target.value)}
+                  placeholder="e.g. Parking"
+                  className={inputClass}
+                />
+              </div>
+            )}
+          </div>
+
+          <div className="sm:col-span-2">
+            <label
+              htmlFor="receipt"
+              className="mb-1.5 block text-sm font-medium text-slate-700"
+            >
+              Receipt{" "}
+              <span className="font-normal text-slate-400">(optional)</span>
+            </label>
+            <input
+              ref={fileInputRef}
+              id="receipt"
+              type="file"
+              accept="image/*,application/pdf"
+              onChange={handleFileChange}
+              className="block w-full cursor-pointer rounded-lg border border-slate-300 text-sm text-slate-500 file:mr-4 file:cursor-pointer file:rounded-l-lg file:border-0 file:bg-slate-100 file:px-4 file:py-2.5 file:text-sm file:font-medium file:text-slate-700 hover:file:bg-slate-200"
+            />
+            {receiptFile && (
+              <div className="mt-2 flex items-center justify-between rounded-lg bg-emerald-50 px-3.5 py-2 text-sm">
+                <span className="truncate text-emerald-800">
+                  {receiptFile.name}{" "}
+                  <span className="text-emerald-600">
+                    ({(receiptFile.size / 1024).toFixed(0)} KB)
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  onClick={clearReceipt}
+                  className="ml-3 shrink-0 text-xs font-medium text-emerald-700 hover:underline"
+                >
+                  Remove
+                </button>
+              </div>
+            )}
+            <p className="mt-1.5 text-xs text-slate-400">
+              Image or PDF, up to 10 MB. With a receipt attached, you&apos;ll
+              review everything before the expense is saved. Stored locally in
+              this browser for the MVP — Google Drive storage comes later.
+            </p>
+          </div>
+
+          <div className="sm:col-span-2">
+            <label
+              htmlFor="notes"
+              className="mb-1.5 block text-sm font-medium text-slate-700"
+            >
+              Notes{" "}
+              <span className="font-normal text-slate-400">(optional)</span>
+            </label>
+            <textarea
+              id="notes"
+              rows={3}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Anything worth remembering about this expense..."
+              className={inputClass}
+            />
+          </div>
         </div>
 
         {error && (
@@ -377,6 +469,78 @@ export function ExpenseForm({
         </div>
       </form>
 
+      {companyModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <div
+            className="absolute inset-0 bg-slate-900/50"
+            onClick={() => setCompanyModalOpen(false)}
+          />
+          <div className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-xl sm:p-8">
+            <h2 className="text-lg font-semibold text-slate-900">
+              New Company
+            </h2>
+            <p className="mt-1 text-sm text-slate-500">
+              Create a company, then choose or create a project for this
+              expense.
+            </p>
+
+            <form onSubmit={handleCreateCompany} className="mt-6 space-y-5">
+              <div>
+                <label
+                  htmlFor="new_company_name"
+                  className="mb-1.5 block text-sm font-medium text-slate-700"
+                >
+                  Company Name
+                </label>
+                <input
+                  id="new_company_name"
+                  type="text"
+                  required
+                  value={newCompanyName}
+                  onChange={(e) => setNewCompanyName(e.target.value)}
+                  placeholder="e.g. BuildCo Commercial"
+                  className={inputClass}
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="new_company_notes"
+                  className="mb-1.5 block text-sm font-medium text-slate-700"
+                >
+                  Notes{" "}
+                  <span className="font-normal text-slate-400">(optional)</span>
+                </label>
+                <textarea
+                  id="new_company_notes"
+                  rows={3}
+                  value={newCompanyNotes}
+                  onChange={(e) => setNewCompanyNotes(e.target.value)}
+                  placeholder="Anything worth remembering about this company..."
+                  className={inputClass}
+                />
+              </div>
+
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setCompanyModalOpen(false)}
+                  className="rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-700"
+                >
+                  Save Company
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {projectModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
           <div
@@ -388,80 +552,11 @@ export function ExpenseForm({
               New Project
             </h2>
             <p className="mt-1 text-sm text-slate-500">
-              Create a project and keep adding this expense.
+              Create a project under the selected company and keep adding this
+              expense.
             </p>
 
             <form onSubmit={handleCreateProject} className="mt-6 space-y-5">
-              <div>
-                <label
-                  htmlFor="new_project_company_id"
-                  className="mb-1.5 block text-sm font-medium text-slate-700"
-                >
-                  Company
-                </label>
-                <select
-                  id="new_project_company_id"
-                  required
-                  value={newProjectCompanyId}
-                  onChange={(e) => setNewProjectCompanyId(e.target.value)}
-                  className={inputClass}
-                >
-                  <option value="" disabled>
-                    Select a company...
-                  </option>
-                  <option value={CREATE_COMPANY_VALUE}>
-                    + Create New Company
-                  </option>
-                  {sortedCompanies.map((company) => (
-                    <option key={company.id} value={company.id}>
-                      {company.company_name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {newProjectCompanyId === CREATE_COMPANY_VALUE && (
-                <>
-                  <div>
-                    <label
-                      htmlFor="new_company_name"
-                      className="mb-1.5 block text-sm font-medium text-slate-700"
-                    >
-                      New Company Name
-                    </label>
-                    <input
-                      id="new_company_name"
-                      type="text"
-                      required
-                      value={newCompanyName}
-                      onChange={(e) => setNewCompanyName(e.target.value)}
-                      placeholder="e.g. BuildCo Commercial"
-                      className={inputClass}
-                    />
-                  </div>
-
-                  <div>
-                    <label
-                      htmlFor="new_company_notes"
-                      className="mb-1.5 block text-sm font-medium text-slate-700"
-                    >
-                      Company Notes{" "}
-                      <span className="font-normal text-slate-400">
-                        (optional)
-                      </span>
-                    </label>
-                    <textarea
-                      id="new_company_notes"
-                      rows={3}
-                      value={newCompanyNotes}
-                      onChange={(e) => setNewCompanyNotes(e.target.value)}
-                      placeholder="Anything worth remembering about this company..."
-                      className={inputClass}
-                    />
-                  </div>
-                </>
-              )}
-
               <div>
                 <label
                   htmlFor="new_project_name"
@@ -533,7 +628,7 @@ export function ExpenseForm({
                   type="submit"
                   className="rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-700"
                 >
-                  Create Project
+                  Save Project
                 </button>
               </div>
             </form>

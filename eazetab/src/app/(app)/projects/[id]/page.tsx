@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { sortExpenses, useData } from "@/lib/data-context";
-import { EXPENSE_CATEGORIES, type ExpenseWithProject } from "@/lib/types";
+import type { ExpenseWithProject } from "@/lib/types";
+import { expenseCategoryLabel } from "@/lib/expense-category";
 import { formatCurrency } from "@/lib/format";
 import { ProjectFormModal } from "@/components/project-form-modal";
 import { DeleteProjectButton } from "@/components/delete-project-button";
@@ -52,12 +53,15 @@ export default function ProjectDetailPage() {
   const receiptCount = projectExpenses.filter(
     (e) => e.receipt_url && isLocalReceipt(e.receipt_url)
   ).length;
-  const categoryTotals = EXPENSE_CATEGORIES.map((category) => ({
-    category,
-    total: projectExpenses
-      .filter((e) => e.category === category)
-      .reduce((sum, e) => sum + e.amount, 0),
-  })).filter((c) => c.total > 0);
+  const categoryTotals = Array.from(
+    projectExpenses.reduce((totals, expense) => {
+      const category = expenseCategoryLabel(expense);
+      totals.set(category, (totals.get(category) ?? 0) + expense.amount);
+      return totals;
+    }, new Map<string, number>())
+  )
+    .map(([category, total]) => ({ category, total }))
+    .sort((a, b) => b.total - a.total);
 
   const expensesForTable: ExpenseWithProject[] = projectExpenses.map((e) => ({
     ...e,

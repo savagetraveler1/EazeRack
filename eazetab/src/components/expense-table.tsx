@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import type { ExpenseWithProject } from "@/lib/types";
+import { expenseCategoryLabel } from "@/lib/expense-category";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { CategoryBadge } from "@/components/category-badge";
 import { ReceiptLink } from "@/components/receipt-link";
@@ -75,7 +76,7 @@ export function ExpenseTable({
                   </td>
                 )}
                 <td className="px-5 py-3.5">
-                  <CategoryBadge category={expense.category} />
+                  <CategoryBadge category={expenseCategoryLabel(expense)} />
                 </td>
                 <td className="max-w-[220px] truncate px-5 py-3.5 text-slate-500">
                   {expense.notes || <span className="text-slate-300">—</span>}

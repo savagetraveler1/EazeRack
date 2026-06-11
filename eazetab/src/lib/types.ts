@@ -35,6 +35,8 @@ export type Expense = {
   expense_date: string;
   amount: number;
   category: ExpenseCategory;
+  /** Used when category is "Other"; falls back to "Other" when empty. */
+  custom_category: string | null;
   notes: string | null;
   /** Placeholder for the future Google Drive receipt link. */
   receipt_url: string | null;

@@ -82,12 +82,17 @@ function normalizeData(parsed: Partial<StoredData>): StoredData {
     : SEED_PROJECTS;
   const projectIds = new Set(projects.map((p) => p.id));
   const expenses = Array.isArray(parsed.expenses)
-    ? parsed.expenses.filter(
-        (expense): expense is Expense =>
-          typeof expense?.id === "string" &&
-          typeof expense?.project_id === "string" &&
-          projectIds.has(expense.project_id)
-      )
+    ? parsed.expenses
+        .filter(
+          (expense): expense is Expense =>
+            typeof expense?.id === "string" &&
+            typeof expense?.project_id === "string" &&
+            projectIds.has(expense.project_id)
+        )
+        .map((expense) => ({
+          ...expense,
+          custom_category: expense.custom_category ?? null,
+        }))
     : SEED_EXPENSES;
 
   return { companies, projects, expenses };

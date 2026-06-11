@@ -131,6 +131,10 @@ export default function ReviewReceiptsPage() {
       setError("Select a project.");
       return;
     }
+    if (draft.category === "Other" && !draft.custom_category?.trim()) {
+      setError("Enter a custom category.");
+      return;
+    }
 
     addExpense({
       project_id: draft.project_id,
@@ -138,6 +142,10 @@ export default function ReviewReceiptsPage() {
       expense_date: draft.expense_date,
       amount: Math.round(parsedAmount * 100) / 100,
       category: draft.category,
+      custom_category:
+        draft.category === "Other"
+          ? (draft.custom_category?.trim() ?? null)
+          : null,
       notes: draft.notes?.trim() || null,
       receipt_url: draft.receipt_url,
     });
@@ -339,9 +347,16 @@ export default function ReviewReceiptsPage() {
                 id="category"
                 required
                 value={draft.category}
-                onChange={(e) =>
-                  updateDraft({ category: e.target.value as ExpenseCategory })
-                }
+                onChange={(e) => {
+                  const nextCategory = e.target.value as ExpenseCategory;
+                  updateDraft({
+                    category: nextCategory,
+                    custom_category:
+                      nextCategory === "Other"
+                        ? (draft.custom_category ?? "")
+                        : null,
+                  });
+                }}
                 className={inputClass}
               >
                 {EXPENSE_CATEGORIES.map((c) => (
@@ -351,6 +366,27 @@ export default function ReviewReceiptsPage() {
                 ))}
               </select>
             </div>
+
+            {draft.category === "Other" && (
+              <div>
+                <label
+                  htmlFor="custom_category"
+                  className="mb-1.5 block text-sm font-medium text-slate-700"
+                >
+                  Custom Category
+                </label>
+                <input
+                  id="custom_category"
+                  type="text"
+                  required
+                  value={draft.custom_category ?? ""}
+                  onChange={(e) =>
+                    updateDraft({ custom_category: e.target.value })
+                  }
+                  className={inputClass}
+                />
+              </div>
+            )}
 
             <div>
               <label

@@ -10,11 +10,11 @@ const CATEGORY_STYLES: Record<ExpenseCategory, string> = {
   Other: "bg-slate-100 text-slate-600",
 };
 
-export function CategoryBadge({ category }: { category: ExpenseCategory }) {
+export function CategoryBadge({ category }: { category: string }) {
   return (
     <span
       className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
-        CATEGORY_STYLES[category] ?? CATEGORY_STYLES.Other
+        CATEGORY_STYLES[category as ExpenseCategory] ?? CATEGORY_STYLES.Other
       }`}
     >
       {category}
