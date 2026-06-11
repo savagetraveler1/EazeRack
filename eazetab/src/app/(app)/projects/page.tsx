@@ -64,16 +64,19 @@ export default function ProjectsPage() {
             return (
               <div
                 key={project.id}
-                className="flex flex-col rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition hover:border-emerald-300 hover:shadow-md"
+                className="group relative flex cursor-pointer flex-col rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition hover:border-emerald-300 hover:shadow-md"
               >
-                <div className="flex items-start justify-between gap-3">
+                <Link
+                  href={`/projects/${project.id}`}
+                  aria-label={`Open ${project.project_name}`}
+                  className="absolute inset-0 z-10 rounded-2xl"
+                />
+
+                <div className="relative flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <Link
-                      href={`/projects/${project.id}`}
-                      className="block truncate text-base font-semibold text-slate-900 hover:text-emerald-700"
-                    >
+                    <h2 className="block truncate text-base font-semibold text-slate-900 group-hover:text-emerald-700">
                       {project.project_name}
-                    </Link>
+                    </h2>
                     <p className="mt-0.5 truncate text-sm text-slate-500">
                       {project.client_name}
                     </p>
@@ -84,7 +87,7 @@ export default function ProjectsPage() {
                   <StatusBadge status={project.status} />
                 </div>
 
-                <div className="mt-5 flex items-end justify-between border-t border-slate-100 pt-4">
+                <div className="relative mt-5 flex items-end justify-between border-t border-slate-100 pt-4">
                   <div>
                     <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
                       Tab Total
@@ -96,7 +99,7 @@ export default function ProjectsPage() {
                       {stats.count} expense{stats.count === 1 ? "" : "s"}
                     </p>
                   </div>
-                  <div className="flex flex-wrap justify-end gap-2">
+                  <div className="relative z-20 flex flex-wrap justify-end gap-2">
                     <ProjectFormModal
                       project={project}
                       trigger={<>Edit</>}

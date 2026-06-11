@@ -90,12 +90,12 @@ export default function CompaniesPage() {
             return (
               <div
                 key={company.id}
-                className="group relative rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-emerald-300 hover:shadow-md"
+                className="group relative cursor-pointer rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-emerald-300 hover:shadow-md"
               >
                 <Link
                   href={`/companies/${company.id}`}
                   aria-label={`Open ${company.company_name}`}
-                  className="absolute inset-0 rounded-2xl"
+                  className="absolute inset-0 z-10 rounded-2xl"
                 />
 
                 <div className="relative flex items-start justify-between gap-3">
@@ -134,7 +134,7 @@ export default function CompaniesPage() {
                   </div>
                 </div>
 
-                <div className="relative z-10 mt-5 flex justify-end gap-2">
+                <div className="relative z-20 mt-5 flex justify-end gap-2">
                   <CompanyFormModal
                     company={company}
                     trigger={<>Edit</>}
