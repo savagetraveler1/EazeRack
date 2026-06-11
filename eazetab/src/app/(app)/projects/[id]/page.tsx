@@ -7,6 +7,7 @@ import { EXPENSE_CATEGORIES, type ExpenseWithProject } from "@/lib/types";
 import { formatCurrency } from "@/lib/format";
 import { ProjectFormModal } from "@/components/project-form-modal";
 import { DeleteProjectButton } from "@/components/delete-project-button";
+import { ProjectExpenseExportButton } from "@/components/project-expense-export-button";
 import { StatusBadge } from "@/components/status-badge";
 import { ExpenseTable } from "@/components/expense-table";
 import { CategoryBadge } from "@/components/category-badge";
@@ -88,6 +89,14 @@ export default function ProjectDetailPage() {
           </p>
         </div>
         <div className="flex flex-wrap gap-3">
+          <ProjectExpenseExportButton
+            company={company ? { company_name: company.company_name } : null}
+            project={{
+              project_name: project.project_name,
+              client_name: project.client_name,
+            }}
+            expenses={projectExpenses}
+          />
           <ProjectFormModal
             project={project}
             trigger={<>Edit Project</>}
