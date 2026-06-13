@@ -150,50 +150,114 @@ function parseDate(text: string): string | null {
 }
 
 function parseAmount(text: string, lines: string[]): number | null {
-  const finalTotalKeywordGroups: RegExp[] = [
-    /\btotal\b/i,
-    /\bgrand\s*total\b/i,
-    /\bamount\s*paid\b/i,
-    /\bamount\s*due\b/i,
-    /\bbalance\s*due\b/i,
-    /\btotal\s*due\b/i,
-    /\bpaid\b/i,
-  ];
+  const candidates = collectAmountCandidates(lines);
+  const finalTotal = candidates
+    .filter((candidate) => candidate.kind === "final")
+    .sort(compareAmountCandidates)[0];
+  if (finalTotal) return finalTotal.amount;
 
-  for (const keyword of finalTotalKeywordGroups) {
-    const amount = extractAmountNearKeyword(lines, keyword, {
-      exclude: /\bsub\s*total\b|\bsubtotal\b/i,
-    });
-    if (amount !== null) return amount;
-  }
-
-  const subtotal = extractAmountNearKeyword(lines, /\bsub\s*total\b|\bsubtotal\b/i);
-  if (subtotal !== null) return subtotal;
+  const subtotal = candidates
+    .filter((candidate) => candidate.kind === "subtotal")
+    .sort(compareAmountCandidates)[0];
+  if (subtotal) return subtotal.amount;
 
   return extractFirstAmount(text);
 }
 
-function extractAmountNearKeyword(
-  lines: string[],
-  keyword: RegExp,
-  options: { exclude?: RegExp } = {}
-): number | null {
-  for (let i = lines.length - 1; i >= 0; i -= 1) {
-    const line = lines[i];
-    if (!keyword.test(line)) continue;
-    if (options.exclude?.test(line)) continue;
+type AmountCandidate = {
+  amount: number;
+  kind: "final" | "subtotal";
+  labelPriority: number;
+  sameLine: boolean;
+  lineIndex: number;
+};
 
-    const sameLineAmount = extractLastAmount(line);
-    if (sameLineAmount !== null) return sameLineAmount;
+const SUBTOTAL_PATTERN = /\bsub\s*total\b|\bsubtotal\b/i;
+const NON_FINAL_TOTAL_PATTERN =
+  /\b(sub\s*total|subtotal|sales\s*tax|tax|discount|savings?|refund|change)\b/i;
 
-    for (const nearbyLine of [lines[i + 1], lines[i - 1]]) {
-      if (!nearbyLine || options.exclude?.test(nearbyLine)) continue;
-      const nearbyAmount = extractLastAmount(nearbyLine);
-      if (nearbyAmount !== null) return nearbyAmount;
+const FINAL_AMOUNT_LABELS: Array<{ pattern: RegExp; priority: number }> = [
+  { pattern: /\btotal\b/i, priority: 1 },
+  { pattern: /\btotal\s*due\b/i, priority: 2 },
+  { pattern: /\bamount\s*paid\b/i, priority: 3 },
+  { pattern: /\bpaid\b/i, priority: 4 },
+  { pattern: /\bdebit\b/i, priority: 5 },
+  { pattern: /\bcredit\b/i, priority: 6 },
+];
+
+function collectAmountCandidates(lines: string[]): AmountCandidate[] {
+  const candidates: AmountCandidate[] = [];
+
+  lines.forEach((line, lineIndex) => {
+    const subtotalAmount = getSameLineAmountForLabel(line, SUBTOTAL_PATTERN);
+    if (subtotalAmount !== null) {
+      candidates.push({
+        amount: subtotalAmount,
+        kind: "subtotal",
+        labelPriority: 100,
+        sameLine: true,
+        lineIndex,
+      });
     }
-  }
 
-  return null;
+    if (NON_FINAL_TOTAL_PATTERN.test(line)) {
+      return;
+    }
+
+    for (const label of FINAL_AMOUNT_LABELS) {
+      if (!label.pattern.test(line)) continue;
+
+      const sameLineAmount = extractLastAmount(line);
+      if (sameLineAmount !== null) {
+        candidates.push({
+          amount: sameLineAmount,
+          kind: "final",
+          labelPriority: label.priority,
+          sameLine: true,
+          lineIndex,
+        });
+        continue;
+      }
+
+      for (const nearbyLine of [lines[lineIndex + 1], lines[lineIndex - 1]]) {
+        if (!nearbyLine || SUBTOTAL_PATTERN.test(nearbyLine)) continue;
+        const nearbyAmount = extractLastAmount(nearbyLine);
+        if (nearbyAmount === null) continue;
+
+        candidates.push({
+          amount: nearbyAmount,
+          kind: "final",
+          labelPriority: label.priority,
+          sameLine: false,
+          lineIndex,
+        });
+      }
+    }
+  });
+
+  return candidates;
+}
+
+function getSameLineAmountForLabel(line: string, label: RegExp): number | null {
+  if (!label.test(line)) return null;
+  return extractLastAmount(line);
+}
+
+function compareAmountCandidates(a: AmountCandidate, b: AmountCandidate): number {
+  const kindScore = candidateKindScore(b) - candidateKindScore(a);
+  if (kindScore !== 0) return kindScore;
+
+  const sameLineScore = Number(b.sameLine) - Number(a.sameLine);
+  if (sameLineScore !== 0) return sameLineScore;
+
+  const priorityScore = a.labelPriority - b.labelPriority;
+  if (priorityScore !== 0) return priorityScore;
+
+  return b.lineIndex - a.lineIndex;
+}
+
+function candidateKindScore(candidate: AmountCandidate): number {
+  return candidate.kind === "final" ? 2 : 1;
 }
 
 function extractLastAmount(text: string): number | null {
