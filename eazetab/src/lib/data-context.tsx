@@ -16,7 +16,6 @@ import type {
   Project,
   ProjectInput,
   Submission,
-  SubmissionInput,
 } from "@/lib/types";
 import {
   SEED_COMPANIES,
@@ -56,7 +55,8 @@ type DataContextValue = {
   addProject: (input: ProjectInput) => Project;
   updateProject: (id: string, input: ProjectInput) => void;
   deleteProject: (id: string) => Promise<void>;
-  addSubmission: (input: SubmissionInput) => Submission;
+  getOrCreateActiveSubmission: (projectId: string) => Submission | null;
+  closeActiveSubmission: (projectId: string) => void;
   addExpense: (input: ExpenseInput) => Expense;
   deleteExpense: (id: string) => Promise<void>;
 };
@@ -91,6 +91,7 @@ function normalizeData(parsed: Partial<StoredData>): StoredData {
         }))
     : SEED_PROJECTS;
   const projectIds = new Set(projects.map((p) => p.id));
+  const projectById = new Map(projects.map((project) => [project.id, project]));
   const parsedSubmissions = Array.isArray(parsed.submissions)
     ? parsed.submissions
         .filter(
@@ -102,22 +103,26 @@ function normalizeData(parsed: Partial<StoredData>): StoredData {
         )
         .map((submission): Submission => ({
           ...submission,
-          submitted_at:
-            typeof submission.submitted_at === "string"
-              ? submission.submitted_at
-              : submission.created_at,
           status: submission.status === "Closed" ? "Closed" : "Open",
+          submitted_at:
+            submission.status === "Closed"
+              ? typeof submission.submitted_at === "string"
+                ? submission.submitted_at
+                : todayISODate()
+              : null,
           notes: submission.notes ?? null,
         }))
     : [];
-  const submissions =
+  const submissions = normalizeProjectSubmissions(
+    projects,
     parsedSubmissions.length > 0
       ? parsedSubmissions
       : Array.isArray(parsed.submissions)
         ? []
         : SEED_SUBMISSIONS.filter((submission) =>
             projectIds.has(submission.project_id)
-          );
+          )
+  );
   const submissionsByProject = new Map<string, Submission>();
   for (const submission of submissions) {
     if (!submissionsByProject.has(submission.project_id)) {
@@ -141,6 +146,7 @@ function normalizeData(parsed: Partial<StoredData>): StoredData {
               ? expense.submission_id
               : getMigrationSubmission(
                   expense.project_id,
+                  projectById,
                   submissions,
                   submissionsByProject,
                   submissionIds
@@ -154,6 +160,7 @@ function normalizeData(parsed: Partial<StoredData>): StoredData {
 
 function getMigrationSubmission(
   projectId: string,
+  projectById: Map<string, Project>,
   submissions: Submission[],
   submissionsByProject: Map<string, Submission>,
   submissionIds: Set<string>
@@ -161,12 +168,13 @@ function getMigrationSubmission(
   const existing = submissionsByProject.get(projectId);
   if (existing) return existing;
 
+  const project = projectById.get(projectId);
   const submission: Submission = {
     id: `migration-${projectId}`,
     project_id: projectId,
     submission_name: "Migrated Expenses",
-    submitted_at: new Date().toISOString().slice(0, 10),
-    status: "Open",
+    submitted_at: project?.status === "completed" ? todayISODate() : null,
+    status: project?.status === "completed" ? "Closed" : "Open",
     notes: "Created automatically for expenses saved before submissions existed.",
     created_at: new Date().toISOString(),
   };
@@ -174,6 +182,85 @@ function getMigrationSubmission(
   submissionsByProject.set(projectId, submission);
   submissionIds.add(submission.id);
   return submission;
+}
+
+function normalizeProjectSubmissions(
+  projects: Project[],
+  submissions: Submission[]
+): Submission[] {
+  const submissionsByProject = new Map<string, Submission[]>();
+
+  for (const submission of submissions) {
+    const list = submissionsByProject.get(submission.project_id) ?? [];
+    list.push(submission);
+    submissionsByProject.set(submission.project_id, list);
+  }
+
+  const normalized: Submission[] = [];
+
+  for (const project of projects) {
+    const projectSubmissions = submissionsByProject.get(project.id) ?? [];
+    const sortedOpenSubmissions = projectSubmissions
+      .filter((submission) => submission.status === "Open")
+      .sort(compareSubmissionsNewestFirst);
+    const activeSubmission =
+      project.status === "active" ? sortedOpenSubmissions[0] : null;
+
+    if (project.status === "active" && !activeSubmission) {
+      normalized.push(createOpenSubmission(project));
+    }
+
+    for (const submission of projectSubmissions) {
+      if (submission.status === "Open") {
+        if (activeSubmission?.id === submission.id) {
+          normalized.push({ ...submission, submitted_at: null });
+        } else {
+          normalized.push(closeSubmission(submission));
+        }
+      } else {
+        normalized.push(closeSubmission(submission));
+      }
+    }
+  }
+
+  return normalized;
+}
+
+function createOpenSubmission(project: Pick<Project, "id" | "project_name">) {
+  const createdAt = new Date().toISOString();
+
+  return {
+    id: crypto.randomUUID(),
+    project_id: project.id,
+    submission_name: `${todayISODate()} - ${project.project_name}`,
+    submitted_at: null,
+    status: "Open" as const,
+    notes: null,
+    created_at: createdAt,
+  };
+}
+
+function closeSubmission(submission: Submission): Submission {
+  return {
+    ...submission,
+    status: "Closed",
+    submitted_at: submission.submitted_at ?? todayISODate(),
+  };
+}
+
+function compareSubmissionsNewestFirst(a: Submission, b: Submission): number {
+  return (
+    (b.submitted_at ?? "").localeCompare(a.submitted_at ?? "") ||
+    b.created_at.localeCompare(a.created_at)
+  );
+}
+
+function todayISODate(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function loadData(): StoredData {
@@ -241,7 +328,14 @@ export function DataProvider({ children }: { children: ReactNode }) {
       id: crypto.randomUUID(),
       created_at: new Date().toISOString(),
     };
-    setData((d) => ({ ...d, projects: [project, ...d.projects] }));
+    setData((d) => ({
+      ...d,
+      projects: [project, ...d.projects],
+      submissions:
+        project.status === "active"
+          ? [createOpenSubmission(project), ...d.submissions]
+          : d.submissions,
+    }));
     return project;
   }, []);
 
@@ -249,24 +343,66 @@ export function DataProvider({ children }: { children: ReactNode }) {
     setData((d) => ({
       ...d,
       projects: d.projects.map((p) => (p.id === id ? { ...p, ...input } : p)),
+      submissions: normalizeProjectSubmissions(
+        d.projects.map((p) => (p.id === id ? { ...p, ...input } : p)),
+        d.submissions
+      ),
     }));
   }, []);
 
-  const addSubmission = useCallback(
-    (input: SubmissionInput): Submission => {
-      const submission: Submission = {
-        ...input,
-        id: crypto.randomUUID(),
-        created_at: new Date().toISOString(),
-      };
+  const getOrCreateActiveSubmission = useCallback(
+    (projectId: string): Submission | null => {
+      const project = data.projects.find((p) => p.id === projectId);
+      if (!project || project.status === "completed") {
+        return null;
+      }
+
+      const existing = data.submissions.find(
+        (submission) =>
+          submission.project_id === projectId && submission.status === "Open"
+      );
+      if (existing) {
+        return existing;
+      }
+
+      const candidateSubmission = createOpenSubmission(project);
+      let activeSubmission: Submission | null = candidateSubmission;
       setData((d) => ({
         ...d,
-        submissions: [submission, ...d.submissions],
+        submissions: (() => {
+          const latestProject = d.projects.find((p) => p.id === projectId);
+          if (!latestProject || latestProject.status === "completed") {
+            activeSubmission = null;
+            return d.submissions;
+          }
+          const latestOpen = d.submissions.find(
+            (submission) =>
+              submission.project_id === projectId &&
+              submission.status === "Open"
+          );
+          if (latestOpen) {
+            activeSubmission = latestOpen;
+            return d.submissions;
+          }
+          return [candidateSubmission, ...d.submissions];
+        })(),
       }));
-      return submission;
+
+      return activeSubmission;
     },
-    []
+    [data.projects, data.submissions]
   );
+
+  const closeActiveSubmission = useCallback((projectId: string) => {
+    setData((d) => ({
+      ...d,
+      submissions: d.submissions.map((submission) =>
+        submission.project_id === projectId && submission.status === "Open"
+          ? closeSubmission(submission)
+          : submission
+      ),
+    }));
+  }, []);
 
   const addExpense = useCallback((input: ExpenseInput): Expense => {
     const expense: Expense = {
@@ -363,7 +499,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
         addProject,
         updateProject,
         deleteProject,
-        addSubmission,
+        getOrCreateActiveSubmission,
+        closeActiveSubmission,
         addExpense,
         deleteExpense,
       }}

@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { sortExpenses, useData } from "@/lib/data-context";
@@ -7,18 +8,26 @@ import type { ExpenseWithProject } from "@/lib/types";
 import { expenseCategoryLabel } from "@/lib/expense-category";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { ProjectFormModal } from "@/components/project-form-modal";
-import { SubmissionFormModal } from "@/components/submission-form-modal";
 import { DeleteProjectButton } from "@/components/delete-project-button";
 import { ProjectExpenseExportButton } from "@/components/project-expense-export-button";
 import { StatusBadge } from "@/components/status-badge";
 import { ExpenseTable } from "@/components/expense-table";
 import { CategoryBadge } from "@/components/category-badge";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { PageSkeleton } from "@/components/page-skeleton";
 import { isLocalReceipt } from "@/lib/receipt-store";
 
 export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const { hydrated, companies, projects, submissions, expenses } = useData();
+  const {
+    hydrated,
+    companies,
+    projects,
+    submissions,
+    expenses,
+    closeActiveSubmission,
+  } = useData();
+  const [closeBatchOpen, setCloseBatchOpen] = useState(false);
 
   if (!hydrated) {
     return <PageSkeleton />;
@@ -52,10 +61,20 @@ export default function ProjectDetailPage() {
   const projectSubmissions = submissions
     .filter((submission) => submission.project_id === project.id)
     .sort(
-      (a, b) =>
-        b.submitted_at.localeCompare(a.submitted_at) ||
-        b.created_at.localeCompare(a.created_at)
+      (a, b) => {
+        if (a.status !== b.status) {
+          return a.status === "Open" ? -1 : 1;
+        }
+        return (
+          (b.submitted_at ?? "").localeCompare(a.submitted_at ?? "") ||
+          b.created_at.localeCompare(a.created_at)
+        );
+      }
     );
+  const activeSubmission = projectSubmissions.find(
+    (submission) => submission.status === "Open"
+  );
+  const projectIsCompleted = project.status === "completed";
 
   const total = projectExpenses.reduce((sum, e) => sum + e.amount, 0);
   const receiptCount = projectExpenses.filter(
@@ -138,12 +157,18 @@ export default function ProjectDetailPage() {
             redirectTo="/projects"
             className="rounded-lg border border-red-200 bg-white px-4 py-2.5 text-sm font-medium text-red-700 transition hover:bg-red-50"
           />
-          <Link
-            href={`/expenses/new?project=${project.id}`}
-            className="inline-flex items-center justify-center rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-700"
-          >
-            + Add Expense
-          </Link>
+          {projectIsCompleted ? (
+            <span className="inline-flex items-center justify-center rounded-lg bg-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-500">
+              Project completed
+            </span>
+          ) : (
+            <Link
+              href={`/expenses/new?project=${project.id}`}
+              className="inline-flex items-center justify-center rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-700"
+            >
+              + Add Expense
+            </Link>
+          )}
         </div>
       </div>
 
@@ -157,20 +182,24 @@ export default function ProjectDetailPage() {
               Receipt batches under this project.
             </p>
           </div>
-          <SubmissionFormModal
-            project={project}
-            trigger={<>+ New Submission</>}
-            triggerClassName="inline-flex items-center justify-center rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-700"
-          />
+          {!projectIsCompleted && activeSubmission && (
+            <button
+              type="button"
+              onClick={() => setCloseBatchOpen(true)}
+              className="inline-flex items-center justify-center rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-700"
+            >
+              Submit Expenses
+            </button>
+          )}
         </div>
 
         {projectSubmissions.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-10 text-center">
             <p className="text-sm font-medium text-slate-600">
-              No submissions yet
+              No batch history yet
             </p>
             <p className="mt-1 text-sm text-slate-400">
-              Create a submission before adding receipt-backed expenses.
+              Expense batches are created automatically when receipts are added.
             </p>
           </div>
         ) : (
@@ -185,7 +214,11 @@ export default function ProjectDetailPage() {
               return (
                 <div
                   key={submission.id}
-                  className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
+                  className={`rounded-2xl border bg-white p-5 shadow-sm ${
+                    submission.status === "Open"
+                      ? "border-emerald-200"
+                      : "border-slate-200"
+                  }`}
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
@@ -196,10 +229,22 @@ export default function ProjectDetailPage() {
                         Created {formatDate(submission.created_at)}
                       </p>
                     </div>
-                    <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">
+                    <span
+                      className={`rounded-full px-2.5 py-1 text-xs font-medium ${
+                        submission.status === "Open"
+                          ? "bg-emerald-50 text-emerald-700"
+                          : "bg-slate-100 text-slate-600"
+                      }`}
+                    >
                       {submission.status}
                     </span>
                   </div>
+
+                  {submission.submitted_at && (
+                    <p className="mt-2 text-xs font-medium text-slate-400">
+                      Submitted {formatDate(submission.submitted_at)}
+                    </p>
+                  )}
 
                   {submission.notes && (
                     <p className="mt-3 line-clamp-2 text-sm text-slate-500">
@@ -291,6 +336,29 @@ export default function ProjectDetailPage() {
         </h2>
         <ExpenseTable expenses={expensesForTable} showProject={false} />
       </div>
+
+      <ConfirmDialog
+        open={closeBatchOpen}
+        title="Submit expenses?"
+        confirmLabel="Submit Expenses"
+        description={
+          <>
+            <p>
+              This will close the current active batch for{" "}
+              <strong>{project.project_name}</strong> and lock its receipts.
+            </p>
+            <p className="mt-2 text-slate-500">
+              The next receipt added to this project will automatically start a
+              new active batch.
+            </p>
+          </>
+        }
+        onConfirm={() => {
+          closeActiveSubmission(project.id);
+          setCloseBatchOpen(false);
+        }}
+        onCancel={() => setCloseBatchOpen(false)}
+      />
     </div>
   );
 }

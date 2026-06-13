@@ -44,7 +44,13 @@ const inputClass =
 
 export default function ReviewReceiptsPage() {
   const router = useRouter();
-  const { hydrated, projects, submissions, addExpense } = useData();
+  const {
+    hydrated,
+    projects,
+    submissions,
+    getOrCreateActiveSubmission,
+    addExpense,
+  } = useData();
 
   const [draftLoaded, setDraftLoaded] = useState(false);
   const [draft, setDraft] = useState<ExpenseDraft | null>(null);
@@ -225,8 +231,22 @@ export default function ReviewReceiptsPage() {
       setError("Select a project.");
       return;
     }
-    if (!draft.submission_id) {
-      setError("Select a submission.");
+    const selectedProject = projects.find(
+      (project) => project.id === draft.project_id
+    );
+    if (selectedProject?.status === "completed") {
+      setError("Completed projects cannot receive new receipts.");
+      return;
+    }
+    const draftSubmission = submissions.find(
+      (submission) => submission.id === draft.submission_id
+    );
+    const activeSubmission =
+      draftSubmission?.status === "Open"
+        ? draftSubmission
+        : getOrCreateActiveSubmission(draft.project_id);
+    if (!activeSubmission) {
+      setError("This project does not have an active expense batch.");
       return;
     }
     if (!draft.vendor.trim()) {
@@ -240,7 +260,7 @@ export default function ReviewReceiptsPage() {
 
     addExpense({
       project_id: draft.project_id,
-      submission_id: draft.submission_id,
+      submission_id: activeSubmission.id,
       vendor: draft.vendor.trim(),
       expense_date: draft.expense_date,
       amount: Math.round(parsedAmount * 100) / 100,
