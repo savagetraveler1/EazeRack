@@ -7,6 +7,20 @@ export type BarcodeScannerModalProps = {
   onClose: () => void;
 };
 
+function formatScannerStartupError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (typeof error === 'string') {
+    return error;
+  }
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return 'Unknown camera startup error';
+  }
+}
+
 export function BarcodeScannerModal({ title, onScan, onClose }: BarcodeScannerModalProps) {
   const scannerElementId = useId().replace(/:/g, '');
   const scannerRef = useRef<Html5Qrcode | null>(null);
@@ -40,35 +54,57 @@ export function BarcodeScannerModal({ title, onScan, onClose }: BarcodeScannerMo
       }
     };
 
+    const scanConfig: Parameters<Html5Qrcode['start']>[1] = {
+      fps: 10,
+      qrbox: (viewfinderWidth, viewfinderHeight) => {
+        const size = Math.floor(Math.min(viewfinderWidth, viewfinderHeight) * 0.72);
+        return { width: size, height: size };
+      },
+    };
+    const handleScanSuccess = (decodedText: string, _decodedResult: Html5QrcodeResult) => {
+      if (completedRef.current) {
+        return;
+      }
+      completedRef.current = true;
+      void stopScanner().finally(() => {
+        if (!cancelled) {
+          onScan(decodedText);
+        }
+      });
+    };
+    const handleScanMiss = () => {
+      // Decode misses are expected while the camera is scanning.
+    };
+
     const startScanner = async () => {
       try {
         await scanner.start(
-          { facingMode: { ideal: 'environment' } },
-          {
-            fps: 10,
-            qrbox: (viewfinderWidth, viewfinderHeight) => {
-              const size = Math.floor(Math.min(viewfinderWidth, viewfinderHeight) * 0.72);
-              return { width: size, height: size };
-            },
-          },
-          (decodedText: string, _decodedResult: Html5QrcodeResult) => {
-            if (completedRef.current) {
-              return;
-            }
-            completedRef.current = true;
-            void stopScanner().finally(() => {
-              if (!cancelled) {
-                onScan(decodedText);
-              }
-            });
-          },
-          () => {
-            // Decode misses are expected while the camera is scanning.
-          },
+          { facingMode: 'environment' },
+          scanConfig,
+          handleScanSuccess,
+          handleScanMiss,
         );
-      } catch {
-        if (!cancelled) {
-          setErrorMessage('Unable to start camera scanner');
+      } catch (rearCameraError) {
+        console.error('Barcode scanner failed to start with rear camera:', rearCameraError);
+        if (cancelled) {
+          return;
+        }
+        try {
+          const cameras = await Html5Qrcode.getCameras();
+          const defaultCameraId = cameras[0]?.id;
+          if (!defaultCameraId) {
+            throw new Error('No camera devices were found');
+          }
+          await scanner.start(defaultCameraId, scanConfig, handleScanSuccess, handleScanMiss);
+        } catch (defaultCameraError) {
+          console.error('Barcode scanner failed to start with default camera:', defaultCameraError);
+          if (cancelled) {
+            return;
+          }
+          const detail = formatScannerStartupError(defaultCameraError || rearCameraError);
+          setErrorMessage(
+            `Camera could not start. Please check camera permission or try opening in Chrome. Details: ${detail}`,
+          );
         }
       }
     };
