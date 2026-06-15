@@ -63,6 +63,8 @@ export type RackProjectData = {
   placedBlocks: RackPlacedBlock[];
   rackNotes: string;
   projectName: string;
+  siteNumber: string;
+  siteAddress: string;
   rackDescription: string;
   technicianName: string;
   rackIdentity: RackIdentity;
@@ -79,6 +81,8 @@ export function createEmptyRackProject(defaultRackHeightU = 42): RackProjectData
     placedBlocks: [],
     rackNotes: '',
     projectName: '',
+    siteNumber: '',
+    siteAddress: '',
     rackDescription: '',
     technicianName: '',
     rackIdentity: { ...EMPTY_RACK_IDENTITY },

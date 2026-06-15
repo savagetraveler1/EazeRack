@@ -14,6 +14,8 @@ import {
 import { exportRackSurveyToExcel, formatRackUnitsForExcel } from '../services/excelExport';
 import { buildExportFilename, exportRackElementToPdf } from '../services/pdfExport';
 
+import { BarcodeScannerModal } from './BarcodeScannerModal';
+import { OcrLabelReaderModal, type OcrApplyTarget } from './OcrLabelReaderModal';
 import {
   deviceTypeUsesSurveyMetadata,
   EMPTY_RACK_IDENTITY,
@@ -25,6 +27,13 @@ import {
 
 type DeviceType = RackDeviceType;
 type PlacedBlock = RackPlacedBlock;
+type DetailsScanTarget = 'serialNumber' | 'macAddress' | 'assetTag';
+
+const DETAILS_SCAN_TARGET_LABELS: Record<DetailsScanTarget, string> = {
+  serialNumber: 'Serial Number',
+  macAddress: 'MAC Address',
+  assetTag: 'Asset Tag',
+};
 
 const DEVICE_TYPES: DeviceType[] = [
   'Switch',
@@ -94,6 +103,14 @@ const MOBILE_RACK_TAP_MAX_MS = 450;
 const DEFAULT_RACK_UNITS = 42;
 const MIN_RACK_UNITS = 1;
 const MAX_RACK_UNITS = 99;
+const PDF_EXPORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function formatPdfExportDate(date: Date): string {
+  const day = String(date.getDate()).padStart(2, '0');
+  const month = PDF_EXPORT_MONTHS[date.getMonth()];
+  const year = date.getFullYear();
+  return `${day}-${month}-${year}`;
+}
 
 function clampRackUnits(n: number): number {
   return Math.max(MIN_RACK_UNITS, Math.min(MAX_RACK_UNITS, Math.round(n)));
@@ -155,6 +172,65 @@ function normalizeOptionalDescriptor(value: string): string | null {
   return trimmed;
 }
 
+function formatRackNumberDisplay(value: string): string | null {
+  const rackNumber = normalizeOptionalDescriptor(value);
+  if (!rackNumber) {
+    return null;
+  }
+  return /^\d+(?:-\d+)?$/.test(rackNumber) ? `Rack ${rackNumber}` : rackNumber;
+}
+
+type NominatimReverseGeocodeResult = {
+  display_name?: string;
+  address?: Record<string, string | undefined>;
+};
+
+function formatReverseGeocodedAddress(result: NominatimReverseGeocodeResult): string | null {
+  const address = result.address ?? {};
+  const streetName =
+    address.road ??
+    address.pedestrian ??
+    address.footway ??
+    address.path ??
+    address.residential ??
+    address.neighbourhood;
+  const streetAddress = [address.house_number, streetName].filter(Boolean).join(' ').trim();
+  const city = address.city ?? address.town ?? address.village ?? address.hamlet ?? address.municipality;
+  const stateZip = [address.state, address.postcode].filter(Boolean).join(' ').trim();
+  const cityStateZip = [city, stateZip].filter(Boolean).join(', ').trim();
+
+  if (streetAddress && cityStateZip) {
+    return `${streetAddress}\n${cityStateZip}`;
+  }
+  if (streetAddress) {
+    return streetAddress;
+  }
+  if (cityStateZip) {
+    return cityStateZip;
+  }
+  return typeof result.display_name === 'string' && result.display_name.trim() ? result.display_name.trim() : null;
+}
+
+async function reverseGeocodeCoordinates(latitude: number, longitude: number): Promise<string | null> {
+  const params = new URLSearchParams({
+    format: 'jsonv2',
+    lat: String(latitude),
+    lon: String(longitude),
+    addressdetails: '1',
+    'accept-language': 'en',
+  });
+  const response = await fetch(`https://nominatim.openstreetmap.org/reverse?${params.toString()}`, {
+    headers: {
+      Accept: 'application/json',
+    },
+  });
+  if (!response.ok) {
+    return null;
+  }
+  const result = (await response.json()) as NominatimReverseGeocodeResult;
+  return formatReverseGeocodedAddress(result);
+}
+
 /** Rack identification is complete when both location and rack number are set (trimmed). */
 function isRackIdentityComplete(identity: RackIdentity): boolean {
   return identity.rackLocation.trim() !== '' && identity.rackNumber.trim() !== '';
@@ -163,15 +239,15 @@ function isRackIdentityComplete(identity: RackIdentity): boolean {
 /** Single-line label for app + PDF. Omits empty parts; no placeholders. */
 function formatRackIdentityDisplay(identity: RackIdentity): string | null {
   const loc = normalizeOptionalDescriptor(identity.rackLocation);
-  const num = normalizeOptionalDescriptor(identity.rackNumber);
+  const num = formatRackNumberDisplay(identity.rackNumber);
   if (loc && num) {
-    return `${loc} – Rack ${num}`;
+    return `${loc} – ${num}`;
   }
   if (loc) {
     return loc;
   }
   if (num) {
-    return `Rack ${num}`;
+    return num;
   }
   return null;
 }
@@ -445,9 +521,20 @@ type StoredProjectData = {
   rackNotes?: string;
   /** Project-level label for exports and context. */
   projectName?: string;
+  siteNumber?: string;
+  siteAddress?: string;
   rackDescription?: string;
   technicianName?: string;
   rackIdentity?: RackIdentity;
+};
+
+type ProjectRackInfoDraft = {
+  projectName: string;
+  siteNumber: string;
+  siteAddress: string;
+  rackLocation: string;
+  rackNumber: string;
+  technicianName: string;
 };
 
 function parseStoredRackIdentity(raw: unknown): RackIdentity | null {
@@ -493,6 +580,8 @@ function persistProjectLayout(
   placedBlocks: PlacedBlock[],
   rackNotes: string,
   projectName: string,
+  siteNumber: string,
+  siteAddress: string,
   rackDescription: string,
   technicianName: string,
   rackIdentity: RackIdentity,
@@ -504,6 +593,8 @@ function persistProjectLayout(
       placedBlocks,
       rackNotes,
       projectName,
+      siteNumber,
+      siteAddress,
       rackDescription,
       technicianName,
       rackIdentity,
@@ -523,6 +614,8 @@ function readStoredProjectFromLocalStorage(): StoredProjectData | null {
       placedBlocks?: unknown;
       rackNotes?: unknown;
       projectName?: unknown;
+      siteNumber?: unknown;
+      siteAddress?: unknown;
       rackDescription?: unknown;
       technicianName?: unknown;
       rackIdentity?: unknown;
@@ -540,6 +633,12 @@ function readStoredProjectFromLocalStorage(): StoredProjectData | null {
     }
     if (typeof parsed.projectName === 'string') {
       out.projectName = parsed.projectName;
+    }
+    if (typeof parsed.siteNumber === 'string') {
+      out.siteNumber = parsed.siteNumber;
+    }
+    if (typeof parsed.siteAddress === 'string') {
+      out.siteAddress = parsed.siteAddress;
     }
     if (typeof parsed.rackDescription === 'string') {
       out.rackDescription = parsed.rackDescription;
@@ -641,10 +740,26 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
   const [rackNotes, setRackNotes] = useState('');
   /** Project-level name for exports (persisted with layout). */
   const [projectName, setProjectName] = useState('');
+  const [siteNumber, setSiteNumber] = useState('');
+  const [siteAddress, setSiteAddress] = useState('');
   const [rackDescription, setRackDescription] = useState('');
   const [technicianName, setTechnicianName] = useState('');
+  const [capturedLocation, setCapturedLocation] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [locationCaptureStatus, setLocationCaptureStatus] = useState<{
+    type: 'info' | 'success' | 'error';
+    message: string;
+  } | null>(null);
   const [rackIdentity, setRackIdentity] = useState<RackIdentity>(EMPTY_RACK_IDENTITY);
   const [rackIdentityPromptDraft, setRackIdentityPromptDraft] = useState<RackIdentity>(EMPTY_RACK_IDENTITY);
+  const [rackIdentityEditorOpen, setRackIdentityEditorOpen] = useState(false);
+  const [projectRackInfoDraft, setProjectRackInfoDraft] = useState<ProjectRackInfoDraft>({
+    projectName: '',
+    siteNumber: '',
+    siteAddress: '',
+    rackLocation: '',
+    rackNumber: '',
+    technicianName: '',
+  });
   const [placedBlocks, setPlacedBlocks] = useState<PlacedBlock[]>([]);
   const [activeBlockId, setActiveBlockId] = useState<number | null>(null);
   const [draggingBlockSize, setDraggingBlockSize] = useState<number | null>(null);
@@ -670,6 +785,8 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
     mode: 'create' | 'edit';
     blockId: number;
   } | null>(null);
+  const [detailsScanTarget, setDetailsScanTarget] = useState<DetailsScanTarget | null>(null);
+  const [ocrLabelReaderOpen, setOcrLabelReaderOpen] = useState(false);
   const [detailsDraft, setDetailsDraft] = useState<{
     deviceType: DeviceType;
     deviceName: string;
@@ -760,11 +877,23 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
       placedBlocks: placedBlocks.map((b) => ({ ...b })),
       rackNotes,
       projectName,
+      siteNumber,
+      siteAddress,
       rackDescription,
       technicianName,
       rackIdentity: { ...rackIdentity },
     };
-  }, [rackUnitsU, placedBlocks, rackNotes, projectName, rackDescription, technicianName, rackIdentity]);
+  }, [
+    rackUnitsU,
+    placedBlocks,
+    rackNotes,
+    projectName,
+    siteNumber,
+    siteAddress,
+    rackDescription,
+    technicianName,
+    rackIdentity,
+  ]);
 
   const palettePreviewValid =
     draggingBlockSize !== null &&
@@ -1261,6 +1390,8 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
           placedBlocks,
           rackNotes,
           projectName,
+          siteNumber,
+          siteAddress,
           rackDescription,
           technicianName,
           rackIdentity,
@@ -1278,6 +1409,8 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
     placedBlocks,
     rackNotes,
     projectName,
+    siteNumber,
+    siteAddress,
     rackDescription,
     technicianName,
     rackIdentity,
@@ -1289,9 +1422,9 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
     if (!pdfExportRef.current) {
       return;
     }
-    const dateStr = new Date().toLocaleDateString('en-CA');
+    const dateStr = formatPdfExportDate(new Date());
     if (pdfExportDateRef.current) {
-      pdfExportDateRef.current.textContent = `Generated on: ${dateStr}`;
+      pdfExportDateRef.current.textContent = dateStr;
     }
     const filename = buildExportFilename({
       projectName,
@@ -1323,6 +1456,8 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
       const survey = deviceTypeUsesSurveyMetadata(block.deviceType);
       return {
         'Project Name': projectName.trim(),
+        'Site Number': siteNumber.trim(),
+        Address: siteAddress.trim(),
         'Rack Location': rackIdentity.rackLocation.trim(),
         'Rack Number': rackIdentity.rackNumber.trim(),
         'Rack Units': formatRackUnitsForExcel(block),
@@ -1359,6 +1494,8 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
   }, [
     placedBlocks,
     projectName,
+    siteNumber,
+    siteAddress,
     rackIdentity.rackLocation,
     rackIdentity.rackNumber,
     technicianName,
@@ -1445,6 +1582,8 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
     }
     setRackNotes(data.rackNotes ?? '');
     setProjectName(data.projectName ?? '');
+    setSiteNumber(data.siteNumber ?? '');
+    setSiteAddress(data.siteAddress ?? '');
     setRackDescription(data.rackDescription ?? '');
     setTechnicianName(data.technicianName ?? '');
     setRackIdentity(data.rackIdentity ?? EMPTY_RACK_IDENTITY);
@@ -1454,6 +1593,7 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
     setResizeSession(null);
     setMoveSession(null);
     setDetailsModal(null);
+    setRackIdentityEditorOpen(false);
     setRackHeightMobileExpanded(false);
   };
 
@@ -1482,6 +1622,7 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
     setResizeSession(null);
     setMoveSession(null);
     setDetailsModal(null);
+    setRackIdentityEditorOpen(false);
     setRackHeightMobileExpanded(false);
   };
 
@@ -1494,6 +1635,8 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
       return;
     }
     setProjectName('');
+    setSiteNumber('');
+    setSiteAddress('');
     setTechnicianName('');
     setRackDescription('');
     setRackNotes('');
@@ -1503,6 +1646,7 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
     setResizeSession(null);
     setMoveSession(null);
     setDetailsModal(null);
+    setRackIdentityEditorOpen(false);
     setRackHeightMobileExpanded(false);
   };
 
@@ -1511,6 +1655,8 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
     let blocks: PlacedBlock[] = [];
     let notes = '';
     let pname = '';
+    let siteNum = '';
+    let siteAddr = '';
     let rdesc = '';
     let tech = '';
     let rid: RackIdentity = { ...EMPTY_RACK_IDENTITY };
@@ -1530,6 +1676,8 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
         }
         notes = data.rackNotes ?? '';
         pname = data.projectName ?? '';
+        siteNum = data.siteNumber ?? '';
+        siteAddr = data.siteAddress ?? '';
         rdesc = data.rackDescription ?? '';
         tech = data.technicianName ?? '';
         rid = data.rackIdentity ?? EMPTY_RACK_IDENTITY;
@@ -1552,6 +1700,12 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
       if (p.projectName !== undefined) {
         pname = p.projectName;
       }
+      if (p.siteNumber !== undefined) {
+        siteNum = p.siteNumber;
+      }
+      if (p.siteAddress !== undefined) {
+        siteAddr = p.siteAddress;
+      }
       if (p.rackDescription !== undefined) {
         rdesc = p.rackDescription;
       }
@@ -1573,6 +1727,8 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
     setPlacedBlocks(blocks);
     setRackNotes(notes);
     setProjectName(pname);
+    setSiteNumber(siteNum);
+    setSiteAddress(siteAddr);
     setRackDescription(rdesc);
     setTechnicianName(tech);
     setRackIdentity(rid);
@@ -1584,7 +1740,19 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
       return;
     }
     onProjectChangeRef.current?.(buildRackProjectSnapshot());
-  }, [hydrated, buildRackProjectSnapshot, rackUnitsU, placedBlocks, rackNotes, projectName, rackDescription, technicianName, rackIdentity]);
+  }, [
+    hydrated,
+    buildRackProjectSnapshot,
+    rackUnitsU,
+    placedBlocks,
+    rackNotes,
+    projectName,
+    siteNumber,
+    siteAddress,
+    rackDescription,
+    technicianName,
+    rackIdentity,
+  ]);
 
   useEffect(() => {
     if (!isMobileLayout) {
@@ -1614,6 +1782,8 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
       placedBlocks,
       rackNotes,
       projectName,
+      siteNumber,
+      siteAddress,
       rackDescription,
       technicianName,
       rackIdentity,
@@ -1624,6 +1794,8 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
     placedBlocks,
     rackNotes,
     projectName,
+    siteNumber,
+    siteAddress,
     rackDescription,
     technicianName,
     rackIdentity,
@@ -1812,12 +1984,16 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
     );
     setArmedDeviceType(detailsDraft.deviceType);
     setDetailsModal(null);
+    setDetailsScanTarget(null);
+    setOcrLabelReaderOpen(false);
   };
 
   const handleDetailsCancel = () => {
     if (!detailsModal) {
       return;
     }
+    setDetailsScanTarget(null);
+    setOcrLabelReaderOpen(false);
     if (detailsModal.mode === 'create') {
       handleDeleteBlock(detailsModal.blockId);
     } else {
@@ -1825,11 +2001,28 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
     }
   };
 
+  const handleDetailsScanSuccess = useCallback((value: string) => {
+    if (!detailsScanTarget) {
+      return;
+    }
+    const target = detailsScanTarget;
+    setDetailsDraft((draft) => ({ ...draft, [target]: value }));
+    setDetailsScanTarget(null);
+  }, [detailsScanTarget]);
+
+  const handleOcrApply = useCallback((target: OcrApplyTarget, value: string) => {
+    setDetailsDraft((draft) => ({ ...draft, [target]: value }));
+    setOcrLabelReaderOpen(false);
+  }, []);
+
   handleDetailsCancelRef.current = handleDetailsCancel;
 
   useEffect(() => {
     if (detailsModal) {
       detailsModalPointerDownStartedInsideRef.current = false;
+    } else {
+      setDetailsScanTarget(null);
+      setOcrLabelReaderOpen(false);
     }
   }, [detailsModal]);
 
@@ -2104,6 +2297,8 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
   const showFullRackHeightInSidebar = !isMobileLayout || rackHeightMobileExpanded;
   const rackIdentityDisplayLine = formatRackIdentityDisplay(rackIdentity);
   const projectNameDisplay = normalizeOptionalDescriptor(projectName);
+  const siteNumberDisplay = normalizeOptionalDescriptor(siteNumber);
+  const siteAddressDisplay = normalizeOptionalDescriptor(siteAddress);
   const rackDescriptionDisplay = normalizeOptionalDescriptor(rackDescription);
   const technicianDisplay = normalizeOptionalDescriptor(technicianName);
 
@@ -2132,6 +2327,92 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
       rackLocation: rackIdentityPromptDraft.rackLocation,
       rackNumber: rackIdentityPromptDraft.rackNumber,
     });
+  };
+
+  const openRackIdentityEditor = () => {
+    setProjectRackInfoDraft({
+      projectName,
+      siteNumber,
+      siteAddress,
+      rackLocation: rackIdentity.rackLocation,
+      rackNumber: rackIdentity.rackNumber,
+      technicianName,
+    });
+    setRackIdentityEditorOpen(true);
+  };
+
+  const handleRackIdentityEditorCancel = () => {
+    setRackIdentityEditorOpen(false);
+  };
+
+  const handleRackIdentityEditorSave = () => {
+    setProjectName(projectRackInfoDraft.projectName);
+    setSiteNumber(projectRackInfoDraft.siteNumber);
+    setSiteAddress(projectRackInfoDraft.siteAddress);
+    setTechnicianName(projectRackInfoDraft.technicianName);
+    setRackIdentity({
+      rackLocation: projectRackInfoDraft.rackLocation,
+      rackNumber: projectRackInfoDraft.rackNumber,
+    });
+    setRackIdentityEditorOpen(false);
+  };
+
+  const handleUseMyLocation = ({
+    existingAddress,
+    applyAddress,
+  }: {
+    existingAddress: string;
+    applyAddress: (nextAddress: string) => void;
+  }) => {
+    if (!navigator.geolocation) {
+      setLocationCaptureStatus({ type: 'error', message: 'Unable to determine current location' });
+      return;
+    }
+
+    setLocationCaptureStatus(null);
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const { latitude, longitude } = position.coords;
+        setCapturedLocation({ latitude, longitude });
+        setLocationCaptureStatus({ type: 'info', message: 'Finding address...' });
+        void (async () => {
+          try {
+            const nextAddress = await reverseGeocodeCoordinates(latitude, longitude);
+            if (!nextAddress) {
+              setLocationCaptureStatus({ type: 'error', message: 'Unable to find address from current location' });
+              return;
+            }
+
+            const currentAddress = existingAddress.trim();
+            if (
+              currentAddress &&
+              currentAddress !== nextAddress.trim() &&
+              !window.confirm('Replace the existing Address with the address from your current location?')
+            ) {
+              setLocationCaptureStatus({ type: 'success', message: 'Location captured successfully' });
+              return;
+            }
+
+            applyAddress(nextAddress);
+            setLocationCaptureStatus({ type: 'success', message: 'Address added successfully' });
+          } catch {
+            setLocationCaptureStatus({ type: 'error', message: 'Unable to find address from current location' });
+          }
+        })();
+      },
+      (error) => {
+        const message =
+          error.code === error.PERMISSION_DENIED
+            ? 'Location permission denied'
+            : 'Unable to determine current location';
+        setLocationCaptureStatus({ type: 'error', message });
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 60000,
+      },
+    );
   };
 
   const usedDeviceTypesInRack = new Set(placedBlocks.map((b) => b.deviceType));
@@ -2223,6 +2504,55 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
               aria-label="Project Name"
             />
           </label>
+          <label className="form-field site-number-field" htmlFor="site-number-input">
+            <span>Site Number</span>
+            <input
+              id="site-number-input"
+              type="text"
+              value={siteNumber}
+              onChange={(event) => setSiteNumber(event.target.value)}
+              placeholder="e.g. Site 1042"
+              autoComplete="off"
+              aria-label="Site Number"
+            />
+          </label>
+          <label className="form-field site-address-field" htmlFor="site-address-input">
+            <span>Address</span>
+            <textarea
+              id="site-address-input"
+              value={siteAddress}
+              onChange={(event) => setSiteAddress(event.target.value)}
+              placeholder="e.g. 123 Main St, Houston, TX"
+              autoComplete="street-address"
+              aria-label="Address"
+              rows={2}
+            />
+          </label>
+          <div className="location-capture-control">
+            <button
+              type="button"
+              className="location-capture-btn"
+              onClick={() =>
+                handleUseMyLocation({
+                  existingAddress: siteAddress,
+                  applyAddress: setSiteAddress,
+                })
+              }
+            >
+              Use My Location
+            </button>
+            {locationCaptureStatus ? (
+              <p className={`location-capture-status location-capture-status-${locationCaptureStatus.type}`}>
+                {locationCaptureStatus.message}
+              </p>
+            ) : null}
+            {capturedLocation ? (
+              <p className="location-capture-coordinates">
+                Coordinates captured: {capturedLocation.latitude.toFixed(6)},{' '}
+                {capturedLocation.longitude.toFixed(6)}
+              </p>
+            ) : null}
+          </div>
           <label className="form-field technician-name-field" htmlFor="technician-name-input">
             <span>Technician Name</span>
             <input
@@ -2620,11 +2950,28 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
             }}
           >
           <div className="workspace-rack-column">
-          {rackIdentityDisplayLine || rackDescriptionDisplay ? (
+          {projectNameDisplay || rackIdentityDisplayLine || rackDescriptionDisplay ? (
             <div className="rack-context-display" aria-label="Rack context">
-              {rackIdentityDisplayLine ? (
-                <div className="rack-identity-display-line">{rackIdentityDisplayLine}</div>
-              ) : null}
+              <button
+                type="button"
+                className="rack-identity-title-button"
+                onClick={openRackIdentityEditor}
+                onPointerDown={(event) => event.stopPropagation()}
+                aria-label="Edit rack location and rack number"
+                title="Edit rack identification"
+              >
+                <span className="rack-title-card-text">
+                  {projectNameDisplay ? (
+                    <span className="rack-title-project-line">{projectNameDisplay}</span>
+                  ) : null}
+                  <span className="rack-identity-display-line">
+                    {rackIdentityDisplayLine ?? 'Add rack identification'}
+                  </span>
+                </span>
+                <span className="rack-identity-edit-icon" aria-hidden="true">
+                  ✎
+                </span>
+              </button>
               {rackDescriptionDisplay ? (
                 <div className="rack-description-display-line">{rackDescriptionDisplay}</div>
               ) : null}
@@ -2829,28 +3176,47 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
         data-rack-notes={rackNotes}
       >
         <header className="pdf-export-header">
-          {projectNameDisplay && rackIdentityDisplayLine ? (
-            <>
+          <div className="pdf-export-title-block">
+            {projectNameDisplay ? (
               <h1 className="pdf-export-doc-title">{projectNameDisplay}</h1>
+            ) : rackIdentityDisplayLine ? (
+              <h1 className="pdf-export-doc-title">{rackIdentityDisplayLine}</h1>
+            ) : (
+              <h1 className="pdf-export-doc-title">Rack Survey</h1>
+            )}
+            {projectNameDisplay && rackIdentityDisplayLine ? (
               <p className="pdf-export-doc-subtitle">{rackIdentityDisplayLine}</p>
-            </>
-          ) : projectNameDisplay ? (
-            <h1 className="pdf-export-doc-title">{projectNameDisplay}</h1>
-          ) : rackIdentityDisplayLine ? (
-            <h1 className="pdf-export-doc-title">{rackIdentityDisplayLine}</h1>
-          ) : null}
+            ) : null}
+          </div>
           {rackDescriptionDisplay ? (
             <p className="pdf-export-doc-description">{rackDescriptionDisplay}</p>
           ) : null}
-          <div className="pdf-export-doc-meta-group">
-            <p className="pdf-export-doc-meta">
-              <span ref={pdfExportDateRef} />
-            </p>
-            {technicianDisplay ? (
-              <p className="pdf-export-doc-meta">Technician: {technicianDisplay}</p>
+          <dl className="pdf-export-doc-meta-card" aria-label="Project and rack metadata">
+            {siteNumberDisplay ? (
+              <div className="pdf-export-doc-meta-row">
+                <dt>Site Number</dt>
+                <dd>{siteNumberDisplay}</dd>
+              </div>
             ) : null}
-          </div>
+            {siteAddressDisplay ? (
+              <div className="pdf-export-doc-meta-row">
+                <dt>Address</dt>
+                <dd>{siteAddressDisplay}</dd>
+              </div>
+            ) : null}
+            {technicianDisplay ? (
+              <div className="pdf-export-doc-meta-row">
+                <dt>Technician</dt>
+                <dd>{technicianDisplay}</dd>
+              </div>
+            ) : null}
+            <div className="pdf-export-doc-meta-row">
+              <dt>Generated</dt>
+              <dd ref={pdfExportDateRef} />
+            </div>
+          </dl>
         </header>
+        <h2 className="pdf-export-section-heading">Rack Elevation</h2>
         <div className="pdf-export-layout">
           <div className="pdf-export-legend-panel" role="group" aria-label="Device color legend">
             <p className="pdf-export-legend-heading">Device types</p>
@@ -2987,41 +3353,96 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
                       detailsDraft.deviceType === 'Patch Panel' ? 'e.g. PP3-2-1' : 'e.g. Cisco 9300'
                     }
                   />
+                  <button
+                    type="button"
+                    className="ocr-field-btn ocr-field-btn-secondary"
+                    onClick={() => setOcrLabelReaderOpen(true)}
+                  >
+                    Read Label
+                  </button>
                 </label>
                 {detailsModalShowSurveyFields ? (
                   <>
                     <label className="form-field">
                       <span>Serial Number</span>
-                      <input
-                        type="text"
-                        value={detailsDraft.serialNumber}
-                        onChange={(event) =>
-                          setDetailsDraft((draft) => ({ ...draft, serialNumber: event.target.value }))
-                        }
-                        placeholder="e.g. FOC1234ABC"
-                      />
+                      <div className="scan-field-row">
+                        <input
+                          type="text"
+                          value={detailsDraft.serialNumber}
+                          onChange={(event) =>
+                            setDetailsDraft((draft) => ({ ...draft, serialNumber: event.target.value }))
+                          }
+                          placeholder="e.g. FOC1234ABC"
+                        />
+                        <button
+                          type="button"
+                          className="scan-field-btn"
+                          onClick={() => setDetailsScanTarget('serialNumber')}
+                        >
+                          Scan
+                        </button>
+                        <button
+                          type="button"
+                          className="ocr-field-btn"
+                          onClick={() => setOcrLabelReaderOpen(true)}
+                        >
+                          Read Label
+                        </button>
+                      </div>
                     </label>
                     <label className="form-field">
                       <span>MAC Address</span>
-                      <input
-                        type="text"
-                        value={detailsDraft.macAddress}
-                        onChange={(event) =>
-                          setDetailsDraft((draft) => ({ ...draft, macAddress: event.target.value }))
-                        }
-                        placeholder="e.g. 00:1A:2B:3C:4D:5E"
-                      />
+                      <div className="scan-field-row">
+                        <input
+                          type="text"
+                          value={detailsDraft.macAddress}
+                          onChange={(event) =>
+                            setDetailsDraft((draft) => ({ ...draft, macAddress: event.target.value }))
+                          }
+                          placeholder="e.g. 00:1A:2B:3C:4D:5E"
+                        />
+                        <button
+                          type="button"
+                          className="scan-field-btn"
+                          onClick={() => setDetailsScanTarget('macAddress')}
+                        >
+                          Scan
+                        </button>
+                        <button
+                          type="button"
+                          className="ocr-field-btn"
+                          onClick={() => setOcrLabelReaderOpen(true)}
+                        >
+                          Read Label
+                        </button>
+                      </div>
                     </label>
                     <label className="form-field">
                       <span>Asset Tag</span>
-                      <input
-                        type="text"
-                        value={detailsDraft.assetTag}
-                        onChange={(event) =>
-                          setDetailsDraft((draft) => ({ ...draft, assetTag: event.target.value }))
-                        }
-                        placeholder="e.g. HSC-IT-4471"
-                      />
+                      <div className="scan-field-row">
+                        <input
+                          type="text"
+                          value={detailsDraft.assetTag}
+                          onChange={(event) =>
+                            setDetailsDraft((draft) => ({ ...draft, assetTag: event.target.value }))
+                          }
+                          placeholder="e.g. HSC-IT-4471"
+                        />
+                        <button
+                          type="button"
+                          className="scan-field-btn"
+                          onClick={() => setDetailsScanTarget('assetTag')}
+                        >
+                          Scan
+                        </button>
+                        <button
+                          type="button"
+                          className="ocr-field-btn"
+                          onClick={() => setOcrLabelReaderOpen(true)}
+                        >
+                          Read Label
+                        </button>
+                      </div>
                     </label>
                   </>
                 ) : null}
@@ -3064,6 +3485,171 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
           </div>
         </div>
       )}
+      {detailsScanTarget ? (
+        <BarcodeScannerModal
+          title={`Scan ${DETAILS_SCAN_TARGET_LABELS[detailsScanTarget]}`}
+          onScan={handleDetailsScanSuccess}
+          onClose={() => setDetailsScanTarget(null)}
+        />
+      ) : null}
+      {ocrLabelReaderOpen ? (
+        <OcrLabelReaderModal onApply={handleOcrApply} onClose={() => setOcrLabelReaderOpen(false)} />
+      ) : null}
+      {rackIdentityEditorOpen ? (
+        <div
+          className="details-modal-backdrop rack-title-editor-backdrop"
+          role="presentation"
+          onClick={handleRackIdentityEditorCancel}
+        >
+          <div
+            className="details-modal rack-title-editor"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="rack-title-editor-title"
+            aria-describedby="rack-title-editor-desc"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2 id="rack-title-editor-title" className="details-modal-title">
+              Project & Rack Information
+            </h2>
+            <p id="rack-title-editor-desc" className="rack-title-editor-desc">
+              Update the project, rack, and technician details for this rack.
+            </p>
+            <form
+              className="details-modal-form rack-title-editor-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                handleRackIdentityEditorSave();
+              }}
+            >
+              <div className="details-modal-body">
+                <section className="rack-title-editor-section" aria-labelledby="rack-title-editor-project-heading">
+                  <h3 id="rack-title-editor-project-heading">Project Information</h3>
+                  <label className="form-field" htmlFor="rack-title-editor-project-name">
+                    <span>Project Name</span>
+                    <input
+                      id="rack-title-editor-project-name"
+                      type="text"
+                      value={projectRackInfoDraft.projectName}
+                      onChange={(event) =>
+                        setProjectRackInfoDraft((prev) => ({ ...prev, projectName: event.target.value }))
+                      }
+                      placeholder="e.g. HSC Hospital - Houston, TX"
+                      autoComplete="off"
+                      autoFocus
+                    />
+                  </label>
+                  <label className="form-field" htmlFor="rack-title-editor-site-number">
+                    <span>Site Number</span>
+                    <input
+                      id="rack-title-editor-site-number"
+                      type="text"
+                      value={projectRackInfoDraft.siteNumber}
+                      onChange={(event) =>
+                        setProjectRackInfoDraft((prev) => ({ ...prev, siteNumber: event.target.value }))
+                      }
+                      placeholder="e.g. Site 1042"
+                      autoComplete="off"
+                    />
+                  </label>
+                  <label className="form-field" htmlFor="rack-title-editor-address">
+                    <span>Address</span>
+                    <textarea
+                      id="rack-title-editor-address"
+                      value={projectRackInfoDraft.siteAddress}
+                      onChange={(event) =>
+                        setProjectRackInfoDraft((prev) => ({ ...prev, siteAddress: event.target.value }))
+                      }
+                      placeholder="e.g. 123 Main St, Houston, TX"
+                      autoComplete="street-address"
+                      rows={2}
+                    />
+                  </label>
+                  <div className="location-capture-control">
+                    <button
+                      type="button"
+                      className="location-capture-btn"
+                      onClick={() =>
+                        handleUseMyLocation({
+                          existingAddress: projectRackInfoDraft.siteAddress,
+                          applyAddress: (nextAddress) =>
+                            setProjectRackInfoDraft((prev) => ({ ...prev, siteAddress: nextAddress })),
+                        })
+                      }
+                    >
+                      Use My Location
+                    </button>
+                    {locationCaptureStatus ? (
+                      <p className={`location-capture-status location-capture-status-${locationCaptureStatus.type}`}>
+                        {locationCaptureStatus.message}
+                      </p>
+                    ) : null}
+                    {capturedLocation ? (
+                      <p className="location-capture-coordinates">
+                        Coordinates captured: {capturedLocation.latitude.toFixed(6)},{' '}
+                        {capturedLocation.longitude.toFixed(6)}
+                      </p>
+                    ) : null}
+                  </div>
+                </section>
+                <section className="rack-title-editor-section" aria-labelledby="rack-title-editor-rack-heading">
+                  <h3 id="rack-title-editor-rack-heading">Rack Information</h3>
+                  <label className="form-field rack-identity-field" htmlFor="rack-title-editor-location">
+                    <span>Rack Location</span>
+                    <input
+                      id="rack-title-editor-location"
+                      type="text"
+                      value={projectRackInfoDraft.rackLocation}
+                      onChange={(event) =>
+                        setProjectRackInfoDraft((prev) => ({ ...prev, rackLocation: event.target.value }))
+                      }
+                      placeholder="e.g. MDF, IDF A, Room 220"
+                      autoComplete="off"
+                    />
+                  </label>
+                  <label className="form-field rack-identity-field" htmlFor="rack-title-editor-number">
+                    <span>Rack Number / Name</span>
+                    <input
+                      id="rack-title-editor-number"
+                      type="text"
+                      value={projectRackInfoDraft.rackNumber}
+                      onChange={(event) =>
+                        setProjectRackInfoDraft((prev) => ({ ...prev, rackNumber: event.target.value }))
+                      }
+                      placeholder="e.g. Rack 3, Rack 2-5, Network Rack"
+                      autoComplete="off"
+                    />
+                  </label>
+                </section>
+                <section className="rack-title-editor-section" aria-labelledby="rack-title-editor-tech-heading">
+                  <h3 id="rack-title-editor-tech-heading">Technician Information</h3>
+                  <label className="form-field" htmlFor="rack-title-editor-technician">
+                    <span>Technician Name</span>
+                    <input
+                      id="rack-title-editor-technician"
+                      type="text"
+                      value={projectRackInfoDraft.technicianName}
+                      onChange={(event) =>
+                        setProjectRackInfoDraft((prev) => ({ ...prev, technicianName: event.target.value }))
+                      }
+                      placeholder="e.g. Adam"
+                      autoComplete="name"
+                    />
+                  </label>
+                </section>
+              </div>
+              <div className="details-modal-actions">
+                <button type="submit" className="details-modal-btn details-modal-btn-primary">
+                  Save
+                </button>
+                <button type="button" className="details-modal-btn" onClick={handleRackIdentityEditorCancel}>
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
       {saveToastVisible ? (
         <div
           key={saveToastKey}

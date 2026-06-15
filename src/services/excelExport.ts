@@ -12,6 +12,8 @@ export function formatRackUnitsForExcel(block: { startUnit: number; size: number
 
 export type RackSurveyExcelRow = {
   'Project Name': string;
+  'Site Number': string;
+  Address: string;
   'Rack Location': string;
   'Rack Number': string;
   'Rack Units': string;
