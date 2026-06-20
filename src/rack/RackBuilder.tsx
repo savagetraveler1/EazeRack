@@ -786,7 +786,7 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
     blockId: number;
   } | null>(null);
   const [detailsScanTarget, setDetailsScanTarget] = useState<DetailsScanTarget | null>(null);
-  const [ocrLabelReaderOpen, setOcrLabelReaderOpen] = useState(false);
+  const [ocrLabelReaderTarget, setOcrLabelReaderTarget] = useState<OcrApplyTarget | null>(null);
   const [detailsDraft, setDetailsDraft] = useState<{
     deviceType: DeviceType;
     deviceName: string;
@@ -967,6 +967,8 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
 
     const blockId = Date.now() + Math.floor(Math.random() * 1000);
     const typeForNewBlock = armedDeviceType;
+    setDetailsScanTarget(null);
+    setOcrLabelReaderTarget(null);
     setPlacedBlocks((previousBlocks) => [
       ...previousBlocks,
       {
@@ -1849,6 +1851,8 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
   }, [exportMenuOpen]);
 
   const handleDeleteBlock = (blockId: number) => {
+    setDetailsScanTarget(null);
+    setOcrLabelReaderTarget(null);
     setPlacedBlocks((previousBlocks) => previousBlocks.filter((block) => block.id !== blockId));
     setActiveBlockId((currentActiveBlockId) =>
       currentActiveBlockId === blockId ? null : currentActiveBlockId,
@@ -1863,6 +1867,8 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
     if (!block) {
       return;
     }
+    setDetailsScanTarget(null);
+    setOcrLabelReaderTarget(null);
     setDetailsModal({ mode: 'edit', blockId });
     setDetailsDraft({
       deviceType: block.deviceType,
@@ -1985,7 +1991,7 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
     setArmedDeviceType(detailsDraft.deviceType);
     setDetailsModal(null);
     setDetailsScanTarget(null);
-    setOcrLabelReaderOpen(false);
+    setOcrLabelReaderTarget(null);
   };
 
   const handleDetailsCancel = () => {
@@ -1993,7 +1999,7 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
       return;
     }
     setDetailsScanTarget(null);
-    setOcrLabelReaderOpen(false);
+    setOcrLabelReaderTarget(null);
     if (detailsModal.mode === 'create') {
       handleDeleteBlock(detailsModal.blockId);
     } else {
@@ -2012,7 +2018,7 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
 
   const handleOcrApply = useCallback((target: OcrApplyTarget, value: string) => {
     setDetailsDraft((draft) => ({ ...draft, [target]: value }));
-    setOcrLabelReaderOpen(false);
+    setOcrLabelReaderTarget(null);
   }, []);
 
   handleDetailsCancelRef.current = handleDetailsCancel;
@@ -2022,7 +2028,7 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
       detailsModalPointerDownStartedInsideRef.current = false;
     } else {
       setDetailsScanTarget(null);
-      setOcrLabelReaderOpen(false);
+      setOcrLabelReaderTarget(null);
     }
   }, [detailsModal]);
 
@@ -3356,7 +3362,7 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
                   <button
                     type="button"
                     className="ocr-field-btn ocr-field-btn-secondary"
-                    onClick={() => setOcrLabelReaderOpen(true)}
+                    onClick={() => setOcrLabelReaderTarget('deviceName')}
                   >
                     Read Label
                   </button>
@@ -3384,7 +3390,7 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
                         <button
                           type="button"
                           className="ocr-field-btn"
-                          onClick={() => setOcrLabelReaderOpen(true)}
+                          onClick={() => setOcrLabelReaderTarget('serialNumber')}
                         >
                           Read Label
                         </button>
@@ -3411,7 +3417,7 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
                         <button
                           type="button"
                           className="ocr-field-btn"
-                          onClick={() => setOcrLabelReaderOpen(true)}
+                          onClick={() => setOcrLabelReaderTarget('macAddress')}
                         >
                           Read Label
                         </button>
@@ -3438,7 +3444,7 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
                         <button
                           type="button"
                           className="ocr-field-btn"
-                          onClick={() => setOcrLabelReaderOpen(true)}
+                          onClick={() => setOcrLabelReaderTarget('assetTag')}
                         >
                           Read Label
                         </button>
@@ -3492,8 +3498,12 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
           onClose={() => setDetailsScanTarget(null)}
         />
       ) : null}
-      {ocrLabelReaderOpen ? (
-        <OcrLabelReaderModal onApply={handleOcrApply} onClose={() => setOcrLabelReaderOpen(false)} />
+      {ocrLabelReaderTarget ? (
+        <OcrLabelReaderModal
+          initialTarget={ocrLabelReaderTarget}
+          onApply={handleOcrApply}
+          onClose={() => setOcrLabelReaderTarget(null)}
+        />
       ) : null}
       {rackIdentityEditorOpen ? (
         <div
