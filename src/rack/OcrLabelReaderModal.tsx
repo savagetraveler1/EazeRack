@@ -78,6 +78,15 @@ type FocusRingState = {
   y: number;
 };
 
+type VideoCropRect = {
+  sourceX: number;
+  sourceY: number;
+  sourceWidth: number;
+  sourceHeight: number;
+};
+
+const MAX_UPSCALED_OCR_PIXELS = 4_000_000;
+
 const DEFAULT_ZOOM_STATE: ZoomState = {
   supported: false,
   min: 1,
@@ -107,6 +116,113 @@ function getNumericCapability(capabilities: MediaTrackCapabilities, key: string)
 function getStringArrayCapability(capabilities: MediaTrackCapabilities, key: string): string[] {
   const value = (capabilities as unknown as Record<string, unknown>)[key];
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function getVideoCropForTarget(video: HTMLVideoElement, target: HTMLElement): VideoCropRect | null {
+  const videoRect = video.getBoundingClientRect();
+  const targetRect = target.getBoundingClientRect();
+  const videoWidth = video.videoWidth;
+  const videoHeight = video.videoHeight;
+  if (!videoWidth || !videoHeight || !videoRect.width || !videoRect.height) {
+    return null;
+  }
+
+  // The preview uses object-fit: cover, so part of the source frame may be cropped
+  // outside the visible element. Convert the visible target box back into source pixels.
+  const scale = Math.max(videoRect.width / videoWidth, videoRect.height / videoHeight);
+  const renderedWidth = videoWidth * scale;
+  const renderedHeight = videoHeight * scale;
+  const renderedLeft = videoRect.left + (videoRect.width - renderedWidth) / 2;
+  const renderedTop = videoRect.top + (videoRect.height - renderedHeight) / 2;
+
+  const left = clamp((targetRect.left - renderedLeft) / scale, 0, videoWidth);
+  const top = clamp((targetRect.top - renderedTop) / scale, 0, videoHeight);
+  const right = clamp((targetRect.right - renderedLeft) / scale, 0, videoWidth);
+  const bottom = clamp((targetRect.bottom - renderedTop) / scale, 0, videoHeight);
+  const sourceX = Math.round(left);
+  const sourceY = Math.round(top);
+  const sourceWidth = Math.round(right - left);
+  const sourceHeight = Math.round(bottom - top);
+
+  if (sourceWidth < 8 || sourceHeight < 8) {
+    return null;
+  }
+
+  return { sourceX, sourceY, sourceWidth, sourceHeight };
+}
+
+function preprocessOcrCanvas(canvas: HTMLCanvasElement): void {
+  const context = canvas.getContext('2d');
+  if (!context) {
+    return;
+  }
+
+  const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+  const data = imageData.data;
+  for (let index = 0; index < data.length; index += 4) {
+    const gray = data[index] * 0.299 + data[index + 1] * 0.587 + data[index + 2] * 0.114;
+    const contrasted = clamp((gray - 128) * 1.55 + 128, 0, 255);
+    data[index] = contrasted;
+    data[index + 1] = contrasted;
+    data[index + 2] = contrasted;
+  }
+
+  const grayscale = new Uint8ClampedArray(data);
+  const width = canvas.width;
+  const height = canvas.height;
+  for (let y = 1; y < height - 1; y += 1) {
+    for (let x = 1; x < width - 1; x += 1) {
+      const pixel = (y * width + x) * 4;
+      const center = grayscale[pixel];
+      const top = grayscale[((y - 1) * width + x) * 4];
+      const bottom = grayscale[((y + 1) * width + x) * 4];
+      const left = grayscale[(y * width + x - 1) * 4];
+      const right = grayscale[(y * width + x + 1) * 4];
+      const sharpened = clamp(center * 5 - top - bottom - left - right, 0, 255);
+      data[pixel] = sharpened;
+      data[pixel + 1] = sharpened;
+      data[pixel + 2] = sharpened;
+    }
+  }
+
+  context.putImageData(imageData, 0, 0);
+}
+
+function createOcrImageFromTarget(video: HTMLVideoElement, target: HTMLElement): string | null {
+  const crop = getVideoCropForTarget(video, target);
+  if (!crop) {
+    return null;
+  }
+
+  const cropPixels = crop.sourceWidth * crop.sourceHeight;
+  const upscale = cropPixels * 4 <= MAX_UPSCALED_OCR_PIXELS ? 2 : 1;
+  const canvas = document.createElement('canvas');
+  canvas.width = crop.sourceWidth * upscale;
+  canvas.height = crop.sourceHeight * upscale;
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  if (!context) {
+    return null;
+  }
+
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = 'high';
+  context.drawImage(
+    video,
+    crop.sourceX,
+    crop.sourceY,
+    crop.sourceWidth,
+    crop.sourceHeight,
+    0,
+    0,
+    canvas.width,
+    canvas.height,
+  );
+  preprocessOcrCanvas(canvas);
+  return canvas.toDataURL('image/png');
 }
 
 function getNumericRangeCapability(
@@ -365,30 +481,12 @@ export function OcrLabelReaderModal({ initialTarget, onApply, onClose }: OcrLabe
       return;
     }
 
-    const videoRect = video.getBoundingClientRect();
-    const targetRect = targetBox.getBoundingClientRect();
-    const scale = Math.max(videoRect.width / video.videoWidth, videoRect.height / video.videoHeight);
-    const renderedWidth = video.videoWidth * scale;
-    const renderedHeight = video.videoHeight * scale;
-    const offsetX = (videoRect.width - renderedWidth) / 2;
-    const offsetY = (videoRect.height - renderedHeight) / 2;
-    const sourceX = Math.max(0, Math.round((targetRect.left - videoRect.left - offsetX) / scale));
-    const sourceY = Math.max(0, Math.round((targetRect.top - videoRect.top - offsetY) / scale));
-    const sourceWidth = Math.min(video.videoWidth - sourceX, Math.round(targetRect.width / scale));
-    const sourceHeight = Math.min(video.videoHeight - sourceY, Math.round(targetRect.height / scale));
-
-    const canvas = document.createElement('canvas');
-    canvas.width = sourceWidth;
-    canvas.height = sourceHeight;
-    const context = canvas.getContext('2d');
-    if (!context) {
+    const imageDataUrl = createOcrImageFromTarget(video, targetBox);
+    if (!imageDataUrl) {
       setStatus('error');
       setErrorMessage('Unable to capture camera image');
       return;
     }
-
-    context.drawImage(video, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, sourceWidth, sourceHeight);
-    const imageDataUrl = canvas.toDataURL('image/png');
 
     try {
       const result = await Tesseract.recognize(imageDataUrl, 'eng');
