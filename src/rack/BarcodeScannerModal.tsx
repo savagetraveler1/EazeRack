@@ -480,11 +480,12 @@ export function BarcodeScannerModal({ title, onScan, onClose }: BarcodeScannerMo
         <p className="scanner-modal-hint">
           Position the barcode or QR code inside the rectangle, then tap Start Scan.
         </p>
-        <div ref={previewFrameRef} className="scanner-camera-frame" onPointerUp={handleCameraTap}>
+        <div ref={previewFrameRef} className="scanner-camera-frame">
           {phase !== 'scanning' ? (
             <video ref={videoRef} className="scanner-preview-video" playsInline muted />
           ) : null}
           <div id={scannerElementId} className={`scanner-camera${phase === 'scanning' ? ' scanner-camera-active' : ''}`} />
+          <div className="camera-tap-layer" onPointerUp={handleCameraTap} aria-hidden="true" />
           {focusRing ? (
             <span
               key={focusRing.id}
@@ -493,10 +494,11 @@ export function BarcodeScannerModal({ title, onScan, onClose }: BarcodeScannerMo
               aria-hidden="true"
             />
           ) : null}
-          <div className={`capture-target-box barcode-target-box${phase === 'scanning' ? ' barcode-target-box-scanning' : ''}`} aria-hidden="true">
-            <span className="capture-target-label">{phase === 'scanning' ? 'Scanning' : 'Align Code'}</span>
-            {phase === 'scanning' ? <span className="barcode-scan-line" /> : null}
-          </div>
+          {phase !== 'scanning' ? (
+            <div className="capture-target-box barcode-target-box" aria-hidden="true">
+              <span className="capture-target-label">Align Code</span>
+            </div>
+          ) : null}
         </div>
         {focusMessage ? <p className="camera-control-note">{focusMessage}</p> : null}
         {zoomState.supported ? (
