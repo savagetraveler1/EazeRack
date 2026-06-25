@@ -948,7 +948,7 @@ body {
 
 .scan-field-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
   gap: 8px;
   align-items: stretch;
 }
@@ -1260,6 +1260,13 @@ body {
 }
 
 .barcode-target-box {
+  border-color: rgba(255, 255, 255, 0.95);
+}
+
+.qr-target-box {
+  width: min(68%, 260px);
+  height: auto;
+  aspect-ratio: 1;
   border-color: rgba(255, 255, 255, 0.95);
 }
 
@@ -1603,7 +1610,7 @@ body {
 
 @media (max-width: 900px) {
   .scan-field-row {
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) repeat(3, auto);
   }
 
   .ocr-field-btn {

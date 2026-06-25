@@ -3,6 +3,7 @@ import { Html5Qrcode, type Html5QrcodeResult } from 'html5-qrcode';
 
 export type BarcodeScannerModalProps = {
   title: string;
+  scanMode?: 'barcode' | 'qr';
   onScan: (value: string) => void;
   onClose: () => void;
 };
@@ -187,7 +188,7 @@ async function applyScannerCameraQuality(scanner: Html5Qrcode): Promise<void> {
   }
 }
 
-export function BarcodeScannerModal({ title, onScan, onClose }: BarcodeScannerModalProps) {
+export function BarcodeScannerModal({ title, scanMode = 'barcode', onScan, onClose }: BarcodeScannerModalProps) {
   const scannerElementId = useId().replace(/:/g, '');
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const previewFrameRef = useRef<HTMLDivElement | null>(null);
@@ -289,6 +290,10 @@ export function BarcodeScannerModal({ title, onScan, onClose }: BarcodeScannerMo
     const scanConfig: Parameters<Html5Qrcode['start']>[1] = {
       fps: 10,
       qrbox: (viewfinderWidth, viewfinderHeight) => {
+        if (scanMode === 'qr') {
+          const size = Math.floor(Math.min(viewfinderWidth * 0.68, viewfinderHeight * 0.68));
+          return { width: size, height: size };
+        }
         const width = Math.floor(viewfinderWidth * 0.82);
         const height = Math.floor(Math.min(viewfinderHeight * 0.34, width * 0.42));
         return { width, height };
@@ -359,7 +364,7 @@ export function BarcodeScannerModal({ title, onScan, onClose }: BarcodeScannerMo
       void stopScanner();
       startScannerRef.current = null;
     };
-  }, [onScan, scannerElementId]);
+  }, [onScan, scanMode, scannerElementId]);
 
   const handleClose = () => {
     completedRef.current = true;
@@ -478,7 +483,9 @@ export function BarcodeScannerModal({ title, onScan, onClose }: BarcodeScannerMo
           </button>
         </div>
         <p className="scanner-modal-hint">
-          Position the barcode or QR code inside the rectangle, then tap Start Scan.
+          {scanMode === 'qr'
+            ? 'Position the QR code inside the square, then tap Start Scan.'
+            : 'Position the barcode inside the rectangle, then tap Start Scan.'}
         </p>
         <div ref={previewFrameRef} className="scanner-camera-frame">
           {phase !== 'scanning' ? (
@@ -495,8 +502,8 @@ export function BarcodeScannerModal({ title, onScan, onClose }: BarcodeScannerMo
             />
           ) : null}
           {phase !== 'scanning' ? (
-            <div className="capture-target-box barcode-target-box" aria-hidden="true">
-              <span className="capture-target-label">Align Code</span>
+            <div className={`capture-target-box ${scanMode === 'qr' ? 'qr-target-box' : 'barcode-target-box'}`} aria-hidden="true">
+              <span className="capture-target-label">{scanMode === 'qr' ? 'Align QR' : 'Align Code'}</span>
             </div>
           ) : null}
         </div>

@@ -28,6 +28,7 @@ import {
 type DeviceType = RackDeviceType;
 type PlacedBlock = RackPlacedBlock;
 type DetailsScanTarget = 'serialNumber' | 'macAddress' | 'assetTag';
+type DetailsScanMode = 'barcode' | 'qr';
 
 const DETAILS_SCAN_TARGET_LABELS: Record<DetailsScanTarget, string> = {
   serialNumber: 'Serial Number',
@@ -786,6 +787,7 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
     blockId: number;
   } | null>(null);
   const [detailsScanTarget, setDetailsScanTarget] = useState<DetailsScanTarget | null>(null);
+  const [detailsScanMode, setDetailsScanMode] = useState<DetailsScanMode>('barcode');
   const [ocrLabelReaderTarget, setOcrLabelReaderTarget] = useState<OcrApplyTarget | null>(null);
   const [detailsDraft, setDetailsDraft] = useState<{
     deviceType: DeviceType;
@@ -2014,7 +2016,13 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
     const target = detailsScanTarget;
     setDetailsDraft((draft) => ({ ...draft, [target]: value }));
     setDetailsScanTarget(null);
+    setDetailsScanMode('barcode');
   }, [detailsScanTarget]);
+
+  const openDetailsScanner = (target: DetailsScanTarget, mode: DetailsScanMode) => {
+    setDetailsScanMode(mode);
+    setDetailsScanTarget(target);
+  };
 
   const handleOcrApply = useCallback((target: OcrApplyTarget, value: string) => {
     setDetailsDraft((draft) => ({ ...draft, [target]: value }));
@@ -3383,9 +3391,16 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
                         <button
                           type="button"
                           className="scan-field-btn"
-                          onClick={() => setDetailsScanTarget('serialNumber')}
+                          onClick={() => openDetailsScanner('serialNumber', 'barcode')}
                         >
                           Scan
+                        </button>
+                        <button
+                          type="button"
+                          className="scan-field-btn"
+                          onClick={() => openDetailsScanner('serialNumber', 'qr')}
+                        >
+                          QR
                         </button>
                         <button
                           type="button"
@@ -3410,9 +3425,16 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
                         <button
                           type="button"
                           className="scan-field-btn"
-                          onClick={() => setDetailsScanTarget('macAddress')}
+                          onClick={() => openDetailsScanner('macAddress', 'barcode')}
                         >
                           Scan
+                        </button>
+                        <button
+                          type="button"
+                          className="scan-field-btn"
+                          onClick={() => openDetailsScanner('macAddress', 'qr')}
+                        >
+                          QR
                         </button>
                         <button
                           type="button"
@@ -3437,9 +3459,16 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
                         <button
                           type="button"
                           className="scan-field-btn"
-                          onClick={() => setDetailsScanTarget('assetTag')}
+                          onClick={() => openDetailsScanner('assetTag', 'barcode')}
                         >
                           Scan
+                        </button>
+                        <button
+                          type="button"
+                          className="scan-field-btn"
+                          onClick={() => openDetailsScanner('assetTag', 'qr')}
+                        >
+                          QR
                         </button>
                         <button
                           type="button"
@@ -3493,9 +3522,13 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
       )}
       {detailsScanTarget ? (
         <BarcodeScannerModal
-          title={`Scan ${DETAILS_SCAN_TARGET_LABELS[detailsScanTarget]}`}
+          title={`${detailsScanMode === 'qr' ? 'Scan QR for' : 'Scan'} ${DETAILS_SCAN_TARGET_LABELS[detailsScanTarget]}`}
+          scanMode={detailsScanMode}
           onScan={handleDetailsScanSuccess}
-          onClose={() => setDetailsScanTarget(null)}
+          onClose={() => {
+            setDetailsScanTarget(null);
+            setDetailsScanMode('barcode');
+          }}
         />
       ) : null}
       {ocrLabelReaderTarget ? (
