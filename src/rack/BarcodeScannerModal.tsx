@@ -29,6 +29,12 @@ type ZoomState = {
   value: number;
 };
 
+type FocusRingState = {
+  id: number;
+  x: number;
+  y: number;
+};
+
 const DEFAULT_ZOOM_STATE: ZoomState = {
   supported: false,
   min: 1,
@@ -37,9 +43,41 @@ const DEFAULT_ZOOM_STATE: ZoomState = {
   value: 1,
 };
 
+function getScannerVideoConstraints(): MediaTrackConstraints {
+  return {
+    facingMode: { ideal: 'environment' },
+    width: { ideal: 1920 },
+    height: { ideal: 1080 },
+    advanced: [
+      { focusMode: 'continuous' } as MediaTrackConstraintSet,
+      { exposureMode: 'continuous' } as MediaTrackConstraintSet,
+      { whiteBalanceMode: 'continuous' } as MediaTrackConstraintSet,
+    ],
+  };
+}
+
 function getStringArrayCapability(capabilities: MediaTrackCapabilities, key: string): string[] {
   const value = (capabilities as unknown as Record<string, unknown>)[key];
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+}
+
+function getNumericRangeCapability(
+  capabilities: MediaTrackCapabilities,
+  key: string,
+): { min: number; max: number; step: number } | null {
+  const value = (capabilities as unknown as Record<string, unknown>)[key];
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  const range = value as { min?: unknown; max?: unknown; step?: unknown };
+  if (typeof range.min === 'number' && typeof range.max === 'number' && range.max >= range.min) {
+    return {
+      min: range.min,
+      max: range.max,
+      step: typeof range.step === 'number' && range.step > 0 ? range.step : Math.max((range.max - range.min) / 10, 0.1),
+    };
+  }
+  return null;
 }
 
 function getZoomRange(capabilities: MediaTrackCapabilities): { min: number; max: number; step: number } | null {
@@ -58,6 +96,97 @@ function getZoomRange(capabilities: MediaTrackCapabilities): { min: number; max:
   return null;
 }
 
+function getFocusDistance(track: MediaStreamTrack, capabilities: MediaTrackCapabilities): number | undefined {
+  const range = getNumericRangeCapability(capabilities, 'focusDistance');
+  if (!range) {
+    return undefined;
+  }
+  const current = (track.getSettings() as unknown as Record<string, unknown>).focusDistance;
+  if (typeof current === 'number') {
+    return current;
+  }
+  return range.min + (range.max - range.min) / 2;
+}
+
+async function tryApplyFocus(track: MediaStreamTrack, point: { x: number; y: number }): Promise<boolean> {
+  if (typeof track.getCapabilities !== 'function') {
+    return false;
+  }
+
+  const capabilities = track.getCapabilities();
+  const capabilityKeys = capabilities as unknown as Record<string, unknown>;
+  const focusModes = getStringArrayCapability(capabilities, 'focusMode');
+  const focusDistance = getFocusDistance(track, capabilities);
+  const supportsPointOfInterest = 'pointsOfInterest' in capabilityKeys;
+  const attempts: MediaTrackConstraintSet[] = [];
+
+  if (focusModes.includes('manual')) {
+    attempts.push({
+      focusMode: 'manual',
+      ...(supportsPointOfInterest ? { pointsOfInterest: [point] } : {}),
+      ...(focusDistance !== undefined ? { focusDistance } : {}),
+    } as MediaTrackConstraintSet);
+  }
+
+  if (focusModes.includes('single-shot')) {
+    attempts.push({
+      focusMode: 'single-shot',
+      ...(supportsPointOfInterest ? { pointsOfInterest: [point] } : {}),
+    } as MediaTrackConstraintSet);
+  }
+
+  if (focusModes.includes('continuous')) {
+    attempts.push({ focusMode: 'continuous' } as MediaTrackConstraintSet);
+  }
+
+  for (const constraints of attempts) {
+    try {
+      await track.applyConstraints({ advanced: [constraints] });
+      return true;
+    } catch {
+      // Try the next supported focus strategy.
+    }
+  }
+
+  return false;
+}
+
+async function applyContinuousCameraModes(track: MediaStreamTrack | undefined): Promise<void> {
+  if (!track || typeof track.getCapabilities !== 'function') {
+    return;
+  }
+
+  const capabilities = track.getCapabilities();
+  const advanced: MediaTrackConstraintSet[] = [];
+  if (getStringArrayCapability(capabilities, 'focusMode').includes('continuous')) {
+    advanced.push({ focusMode: 'continuous' } as MediaTrackConstraintSet);
+  }
+  if (getStringArrayCapability(capabilities, 'exposureMode').includes('continuous')) {
+    advanced.push({ exposureMode: 'continuous' } as MediaTrackConstraintSet);
+  }
+  if (getStringArrayCapability(capabilities, 'whiteBalanceMode').includes('continuous')) {
+    advanced.push({ whiteBalanceMode: 'continuous' } as MediaTrackConstraintSet);
+  }
+
+  if (!advanced.length) {
+    return;
+  }
+
+  try {
+    await track.applyConstraints({ advanced });
+  } catch {
+    // Some browsers report capabilities but still reject camera controls.
+  }
+}
+
+async function applyScannerCameraQuality(scanner: Html5Qrcode): Promise<void> {
+  try {
+    await scanner.applyVideoConstraints(getScannerVideoConstraints());
+  } catch {
+    // Quality hints are optional; scanning should continue if unsupported.
+  }
+}
+
 export function BarcodeScannerModal({ title, onScan, onClose }: BarcodeScannerModalProps) {
   const scannerElementId = useId().replace(/:/g, '');
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -70,6 +199,7 @@ export function BarcodeScannerModal({ title, onScan, onClose }: BarcodeScannerMo
   const [phase, setPhase] = useState<'starting' | 'preview' | 'scanning' | 'error'>('starting');
   const [zoomState, setZoomState] = useState<ZoomState>(DEFAULT_ZOOM_STATE);
   const [focusMessage, setFocusMessage] = useState<string | null>(null);
+  const [focusRing, setFocusRing] = useState<FocusRingState | null>(null);
 
   useEffect(() => {
     const scanner = new Html5Qrcode(scannerElementId);
@@ -130,7 +260,7 @@ export function BarcodeScannerModal({ title, onScan, onClose }: BarcodeScannerMo
     const startPreview = async () => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: 'environment' } },
+          video: getScannerVideoConstraints(),
           audio: false,
         });
         if (cancelled) {
@@ -143,6 +273,7 @@ export function BarcodeScannerModal({ title, onScan, onClose }: BarcodeScannerMo
           await videoRef.current.play();
         }
         updateCameraCapabilities(stream);
+        void applyContinuousCameraModes(stream.getVideoTracks()[0]);
         setPhase('preview');
       } catch (previewError) {
         console.error('Barcode scanner preview camera failed to start:', previewError);
@@ -184,11 +315,12 @@ export function BarcodeScannerModal({ title, onScan, onClose }: BarcodeScannerMo
       stopPreview();
       try {
         await scanner.start(
-          { facingMode: 'environment' },
+          getScannerVideoConstraints(),
           scanConfig,
           handleScanSuccess,
           handleScanMiss,
         );
+        await applyScannerCameraQuality(scanner);
       } catch (rearCameraError) {
         console.error('Barcode scanner failed to start with rear camera:', rearCameraError);
         if (cancelled) {
@@ -201,6 +333,7 @@ export function BarcodeScannerModal({ title, onScan, onClose }: BarcodeScannerMo
             throw new Error('No camera devices were found');
           }
           await scanner.start(defaultCameraId, scanConfig, handleScanSuccess, handleScanMiss);
+          await applyScannerCameraQuality(scanner);
         } catch (defaultCameraError) {
           console.error('Barcode scanner failed to start with default camera:', defaultCameraError);
           if (cancelled) {
@@ -277,6 +410,17 @@ export function BarcodeScannerModal({ title, onScan, onClose }: BarcodeScannerMo
     }
   };
 
+  const getActiveVideoTrack = (): MediaStreamTrack | undefined => {
+    const previewTrack = previewStreamRef.current?.getVideoTracks()[0];
+    if (previewTrack) {
+      return previewTrack;
+    }
+
+    const scannerVideo = document.getElementById(scannerElementId)?.querySelector<HTMLVideoElement>('video');
+    const scannerStream = scannerVideo?.srcObject instanceof MediaStream ? scannerVideo.srcObject : null;
+    return scannerStream?.getVideoTracks()[0];
+  };
+
   const handleCameraTap = async (event: ReactPointerEvent<HTMLDivElement>) => {
     const frame = previewFrameRef.current;
     if (!frame) {
@@ -284,35 +428,39 @@ export function BarcodeScannerModal({ title, onScan, onClose }: BarcodeScannerMo
     }
     const rect = frame.getBoundingClientRect();
     const point = {
-      x: (event.clientX - rect.left) / rect.width,
-      y: (event.clientY - rect.top) / rect.height,
+      x: Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)),
+      y: Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height)),
     };
 
-    const track = previewStreamRef.current?.getVideoTracks()[0];
-    try {
+    const ringId = Date.now();
+    setFocusRing({ id: ringId, x: point.x * 100, y: point.y * 100 });
+    window.setTimeout(() => {
+      setFocusRing((current) => (current?.id === ringId ? null : current));
+    }, 650);
+
+    const focused = await (async () => {
+      const track = getActiveVideoTrack();
+      if (track && await tryApplyFocus(track, point)) {
+        return true;
+      }
+
       if (phase === 'scanning' && scannerRef.current?.isScanning) {
-        await scannerRef.current.applyVideoConstraints({
-          advanced: [{ focusMode: 'manual', pointsOfInterest: [point] } as MediaTrackConstraintSet],
-        });
-        setFocusMessage(null);
-        return;
-      }
-      if (track) {
-        const focusModes = getStringArrayCapability(track.getCapabilities(), 'focusMode');
-        if (!focusModes.includes('manual') && !focusModes.includes('continuous')) {
-          throw new Error('Focus not supported');
+        try {
+          await scannerRef.current.applyVideoConstraints({
+            advanced: [{ focusMode: 'continuous' } as MediaTrackConstraintSet],
+          });
+          return true;
+        } catch {
+          return false;
         }
-        await track.applyConstraints({
-          advanced: [
-            {
-              focusMode: focusModes.includes('manual') ? 'manual' : 'continuous',
-              pointsOfInterest: [point],
-            } as MediaTrackConstraintSet,
-          ],
-        });
-        setFocusMessage(null);
       }
-    } catch {
+
+      return false;
+    })();
+
+    if (focused) {
+      setFocusMessage(null);
+    } else {
       setFocusMessage('Focus not supported on this device');
       window.setTimeout(() => setFocusMessage(null), 1600);
     }
@@ -337,6 +485,14 @@ export function BarcodeScannerModal({ title, onScan, onClose }: BarcodeScannerMo
             <video ref={videoRef} className="scanner-preview-video" playsInline muted />
           ) : null}
           <div id={scannerElementId} className={`scanner-camera${phase === 'scanning' ? ' scanner-camera-active' : ''}`} />
+          {focusRing ? (
+            <span
+              key={focusRing.id}
+              className="camera-focus-ring"
+              style={{ left: `${focusRing.x}%`, top: `${focusRing.y}%` }}
+              aria-hidden="true"
+            />
+          ) : null}
           <div className={`capture-target-box barcode-target-box${phase === 'scanning' ? ' barcode-target-box-scanning' : ''}`} aria-hidden="true">
             <span className="capture-target-label">{phase === 'scanning' ? 'Scanning' : 'Align Code'}</span>
             {phase === 'scanning' ? <span className="barcode-scan-line" /> : null}

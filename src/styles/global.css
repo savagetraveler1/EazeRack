@@ -1158,6 +1158,35 @@ body {
   pointer-events: auto;
 }
 
+.camera-focus-ring {
+  position: absolute;
+  z-index: 4;
+  width: 58px;
+  height: 58px;
+  border: 2px solid rgba(255, 255, 255, 0.96);
+  border-radius: 999px;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  box-shadow:
+    0 0 0 1px rgba(15, 23, 42, 0.45),
+    0 0 18px rgba(59, 130, 246, 0.55);
+  animation: camera-focus-ring 650ms ease-out forwards;
+}
+
+@keyframes camera-focus-ring {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(1.35);
+  }
+  18% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.78);
+  }
+}
+
 .scanner-camera video,
 .scanner-camera canvas {
   border-radius: 10px;

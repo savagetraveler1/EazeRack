@@ -72,6 +72,12 @@ type ZoomState = {
   value: number;
 };
 
+type FocusRingState = {
+  id: number;
+  x: number;
+  y: number;
+};
+
 const DEFAULT_ZOOM_STATE: ZoomState = {
   supported: false,
   min: 1,
@@ -79,6 +85,19 @@ const DEFAULT_ZOOM_STATE: ZoomState = {
   step: 0.1,
   value: 1,
 };
+
+function getScannerVideoConstraints(): MediaTrackConstraints {
+  return {
+    facingMode: { ideal: 'environment' },
+    width: { ideal: 1920 },
+    height: { ideal: 1080 },
+    advanced: [
+      { focusMode: 'continuous' } as MediaTrackConstraintSet,
+      { exposureMode: 'continuous' } as MediaTrackConstraintSet,
+      { whiteBalanceMode: 'continuous' } as MediaTrackConstraintSet,
+    ],
+  };
+}
 
 function getNumericCapability(capabilities: MediaTrackCapabilities, key: string): number | undefined {
   const value = (capabilities as unknown as Record<string, unknown>)[key];
@@ -88,6 +107,108 @@ function getNumericCapability(capabilities: MediaTrackCapabilities, key: string)
 function getStringArrayCapability(capabilities: MediaTrackCapabilities, key: string): string[] {
   const value = (capabilities as unknown as Record<string, unknown>)[key];
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+}
+
+function getNumericRangeCapability(
+  capabilities: MediaTrackCapabilities,
+  key: string,
+): { min: number; max: number; step: number } | null {
+  const value = (capabilities as unknown as Record<string, unknown>)[key];
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  const range = value as { min?: unknown; max?: unknown; step?: unknown };
+  if (typeof range.min === 'number' && typeof range.max === 'number' && range.max >= range.min) {
+    return {
+      min: range.min,
+      max: range.max,
+      step: typeof range.step === 'number' && range.step > 0 ? range.step : Math.max((range.max - range.min) / 10, 0.1),
+    };
+  }
+  return null;
+}
+
+function getFocusDistance(track: MediaStreamTrack, capabilities: MediaTrackCapabilities): number | undefined {
+  const range = getNumericRangeCapability(capabilities, 'focusDistance');
+  if (!range) {
+    return undefined;
+  }
+  const current = (track.getSettings() as unknown as Record<string, unknown>).focusDistance;
+  if (typeof current === 'number') {
+    return current;
+  }
+  return range.min + (range.max - range.min) / 2;
+}
+
+async function tryApplyFocus(track: MediaStreamTrack, point: { x: number; y: number }): Promise<boolean> {
+  if (typeof track.getCapabilities !== 'function') {
+    return false;
+  }
+
+  const capabilities = track.getCapabilities();
+  const capabilityKeys = capabilities as unknown as Record<string, unknown>;
+  const focusModes = getStringArrayCapability(capabilities, 'focusMode');
+  const focusDistance = getFocusDistance(track, capabilities);
+  const supportsPointOfInterest = 'pointsOfInterest' in capabilityKeys;
+  const attempts: MediaTrackConstraintSet[] = [];
+
+  if (focusModes.includes('manual')) {
+    attempts.push({
+      focusMode: 'manual',
+      ...(supportsPointOfInterest ? { pointsOfInterest: [point] } : {}),
+      ...(focusDistance !== undefined ? { focusDistance } : {}),
+    } as MediaTrackConstraintSet);
+  }
+
+  if (focusModes.includes('single-shot')) {
+    attempts.push({
+      focusMode: 'single-shot',
+      ...(supportsPointOfInterest ? { pointsOfInterest: [point] } : {}),
+    } as MediaTrackConstraintSet);
+  }
+
+  if (focusModes.includes('continuous')) {
+    attempts.push({ focusMode: 'continuous' } as MediaTrackConstraintSet);
+  }
+
+  for (const constraints of attempts) {
+    try {
+      await track.applyConstraints({ advanced: [constraints] });
+      return true;
+    } catch {
+      // Try the next supported focus strategy.
+    }
+  }
+
+  return false;
+}
+
+async function applyContinuousCameraModes(track: MediaStreamTrack | undefined): Promise<void> {
+  if (!track || typeof track.getCapabilities !== 'function') {
+    return;
+  }
+
+  const capabilities = track.getCapabilities();
+  const advanced: MediaTrackConstraintSet[] = [];
+  if (getStringArrayCapability(capabilities, 'focusMode').includes('continuous')) {
+    advanced.push({ focusMode: 'continuous' } as MediaTrackConstraintSet);
+  }
+  if (getStringArrayCapability(capabilities, 'exposureMode').includes('continuous')) {
+    advanced.push({ exposureMode: 'continuous' } as MediaTrackConstraintSet);
+  }
+  if (getStringArrayCapability(capabilities, 'whiteBalanceMode').includes('continuous')) {
+    advanced.push({ whiteBalanceMode: 'continuous' } as MediaTrackConstraintSet);
+  }
+
+  if (!advanced.length) {
+    return;
+  }
+
+  try {
+    await track.applyConstraints({ advanced });
+  } catch {
+    // Optional camera controls are ignored when a browser rejects them.
+  }
 }
 
 export function OcrLabelReaderModal({ initialTarget, onApply, onClose }: OcrLabelReaderModalProps) {
@@ -101,6 +222,7 @@ export function OcrLabelReaderModal({ initialTarget, onApply, onClose }: OcrLabe
   const [activeTarget, setActiveTarget] = useState<OcrApplyTarget>(initialTarget);
   const [zoomState, setZoomState] = useState<ZoomState>(DEFAULT_ZOOM_STATE);
   const [focusMessage, setFocusMessage] = useState<string | null>(null);
+  const [focusRing, setFocusRing] = useState<FocusRingState | null>(null);
 
   const stopCamera = () => {
     streamRef.current?.getTracks().forEach((track) => track.stop());
@@ -156,34 +278,26 @@ export function OcrLabelReaderModal({ initialTarget, onApply, onClose }: OcrLabe
   const handleCameraTap = async (event: ReactPointerEvent<HTMLDivElement>) => {
     const track = streamRef.current?.getVideoTracks()[0];
     const frame = cameraFrameRef.current;
-    if (!track || !frame) {
-      return;
-    }
-
-    const capabilities = track.getCapabilities();
-    const focusModes = getStringArrayCapability(capabilities, 'focusMode');
-    if (!focusModes.includes('manual') && !focusModes.includes('continuous')) {
-      setFocusMessage('Focus not supported on this device');
-      window.setTimeout(() => setFocusMessage(null), 1600);
+    if (!frame) {
       return;
     }
 
     const rect = frame.getBoundingClientRect();
     const point = {
-      x: (event.clientX - rect.left) / rect.width,
-      y: (event.clientY - rect.top) / rect.height,
+      x: Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)),
+      y: Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height)),
     };
-    try {
-      await track.applyConstraints({
-        advanced: [
-          {
-            focusMode: focusModes.includes('manual') ? 'manual' : 'continuous',
-            pointsOfInterest: [point],
-          } as MediaTrackConstraintSet,
-        ],
-      });
+
+    const ringId = Date.now();
+    setFocusRing({ id: ringId, x: point.x * 100, y: point.y * 100 });
+    window.setTimeout(() => {
+      setFocusRing((current) => (current?.id === ringId ? null : current));
+    }, 650);
+
+    const focused = track ? await tryApplyFocus(track, point) : false;
+    if (focused) {
       setFocusMessage(null);
-    } catch {
+    } else {
       setFocusMessage('Focus not supported on this device');
       window.setTimeout(() => setFocusMessage(null), 1600);
     }
@@ -195,7 +309,7 @@ export function OcrLabelReaderModal({ initialTarget, onApply, onClose }: OcrLabe
     const startCamera = async () => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: 'environment' } },
+          video: getScannerVideoConstraints(),
           audio: false,
         });
         if (cancelled) {
@@ -208,6 +322,7 @@ export function OcrLabelReaderModal({ initialTarget, onApply, onClose }: OcrLabe
           await videoRef.current.play();
         }
         updateCameraCapabilities(stream);
+        void applyContinuousCameraModes(stream.getVideoTracks()[0]);
         setStatus('ready');
       } catch {
         if (!cancelled) {
@@ -320,6 +435,14 @@ export function OcrLabelReaderModal({ initialTarget, onApply, onClose }: OcrLabe
         </p>
         <div ref={cameraFrameRef} className="ocr-camera-frame" onPointerUp={handleCameraTap}>
           <video ref={videoRef} className="ocr-camera" playsInline muted />
+          {focusRing ? (
+            <span
+              key={focusRing.id}
+              className="camera-focus-ring"
+              style={{ left: `${focusRing.x}%`, top: `${focusRing.y}%` }}
+              aria-hidden="true"
+            />
+          ) : null}
           <div ref={targetBoxRef} className={`capture-target-box capture-target-box-${activeTarget}`} aria-hidden="true">
             <span className="capture-target-label">{OCR_APPLY_TARGET_LABELS[activeTarget]}</span>
           </div>
