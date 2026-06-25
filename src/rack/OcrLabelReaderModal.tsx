@@ -335,6 +335,7 @@ export function OcrLabelReaderModal({ initialTarget, onApply, onClose }: OcrLabe
   const [status, setStatus] = useState<'starting' | 'ready' | 'reading' | 'error'>('starting');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [ocrText, setOcrText] = useState('');
+  const [capturedImageDataUrl, setCapturedImageDataUrl] = useState<string | null>(null);
   const [activeTarget, setActiveTarget] = useState<OcrApplyTarget>(initialTarget);
   const [zoomState, setZoomState] = useState<ZoomState>(DEFAULT_ZOOM_STATE);
   const [focusMessage, setFocusMessage] = useState<string | null>(null);
@@ -461,7 +462,7 @@ export function OcrLabelReaderModal({ initialTarget, onApply, onClose }: OcrLabe
     onClose();
   };
 
-  const handleReadLabel = async () => {
+  const handleCaptureLabel = () => {
     const video = videoRef.current;
     if (!video || video.videoWidth === 0 || video.videoHeight === 0) {
       setStatus('error');
@@ -469,7 +470,7 @@ export function OcrLabelReaderModal({ initialTarget, onApply, onClose }: OcrLabe
       return;
     }
 
-    setStatus('reading');
+    setStatus('ready');
     setErrorMessage(null);
     setOcrText('');
 
@@ -487,9 +488,25 @@ export function OcrLabelReaderModal({ initialTarget, onApply, onClose }: OcrLabe
       setErrorMessage('Unable to capture camera image');
       return;
     }
+    setCapturedImageDataUrl(imageDataUrl);
+  };
 
+  const handleRetake = () => {
+    setCapturedImageDataUrl(null);
+    setOcrText('');
+    setErrorMessage(null);
+    setStatus('ready');
+  };
+
+  const handleRunOcr = async () => {
+    if (!capturedImageDataUrl) {
+      return;
+    }
+
+    setStatus('reading');
+    setErrorMessage(null);
     try {
-      const result = await Tesseract.recognize(imageDataUrl, 'eng');
+      const result = await Tesseract.recognize(capturedImageDataUrl, 'eng');
       const nextText = suggestTextForTarget(result.data.text, activeTarget);
       if (!nextText) {
         setStatus('error');
@@ -515,6 +532,7 @@ export function OcrLabelReaderModal({ initialTarget, onApply, onClose }: OcrLabe
   };
 
   const readDisabled = status === 'starting' || status === 'reading';
+  const showCapturedPreview = capturedImageDataUrl !== null;
   const hasText = ocrText.trim() !== '';
 
   return (
@@ -531,9 +549,12 @@ export function OcrLabelReaderModal({ initialTarget, onApply, onClose }: OcrLabe
         <p className="ocr-modal-hint">
           {getTargetHint(activeTarget)} OCR can misread O/0, I/1, and B/8. Verify before applying.
         </p>
-        <div ref={cameraFrameRef} className="ocr-camera-frame" onPointerUp={handleCameraTap}>
-          <video ref={videoRef} className="ocr-camera" playsInline muted />
-          {focusRing ? (
+        <div ref={cameraFrameRef} className="ocr-camera-frame" onPointerUp={showCapturedPreview ? undefined : handleCameraTap}>
+          <video ref={videoRef} className={`ocr-camera${showCapturedPreview ? ' ocr-camera-hidden' : ''}`} playsInline muted />
+          {capturedImageDataUrl ? (
+            <img className="ocr-capture-preview-image" src={capturedImageDataUrl} alt="Cropped label preview for OCR" />
+          ) : null}
+          {!showCapturedPreview && focusRing ? (
             <span
               key={focusRing.id}
               className="camera-focus-ring"
@@ -541,12 +562,18 @@ export function OcrLabelReaderModal({ initialTarget, onApply, onClose }: OcrLabe
               aria-hidden="true"
             />
           ) : null}
-          <div ref={targetBoxRef} className={`capture-target-box capture-target-box-${activeTarget}`} aria-hidden="true">
-            <span className="capture-target-label">{OCR_APPLY_TARGET_LABELS[activeTarget]}</span>
-          </div>
+          {!showCapturedPreview ? (
+            <div ref={targetBoxRef} className={`capture-target-box capture-target-box-${activeTarget}`} aria-hidden="true">
+              <span className="capture-target-label">{OCR_APPLY_TARGET_LABELS[activeTarget]}</span>
+            </div>
+          ) : (
+            <div ref={targetBoxRef} className="ocr-hidden-target-box" aria-hidden="true" />
+          )}
         </div>
-        {focusMessage ? <p className="camera-control-note">{focusMessage}</p> : null}
-        {zoomState.supported ? (
+        {showCapturedPreview ? (
+          <p className="camera-control-note">Review the crop. Retake if it is blurry or missing the label.</p>
+        ) : focusMessage ? <p className="camera-control-note">{focusMessage}</p> : null}
+        {!showCapturedPreview && zoomState.supported ? (
           <div className="camera-zoom-controls" aria-label="Camera zoom controls">
             <button type="button" onClick={() => void applyZoom(zoomState.value - zoomState.step)}>
               Zoom -
@@ -564,13 +591,32 @@ export function OcrLabelReaderModal({ initialTarget, onApply, onClose }: OcrLabe
             {errorMessage}
           </p>
         ) : null}
-        <button type="button" className="ocr-read-btn" onClick={handleReadLabel} disabled={readDisabled}>
-          {status === 'reading' ? 'Reading cropped label...' : 'Capture'}
-        </button>
+        {capturedImageDataUrl ? (
+          <div className="ocr-capture-actions">
+            <button type="button" className="ocr-secondary-btn" onClick={handleRetake} disabled={status === 'reading'}>
+              Retake
+            </button>
+            <button type="button" className="ocr-read-btn" onClick={() => void handleRunOcr()} disabled={status === 'reading'}>
+              {status === 'reading' ? 'Reading cropped label...' : 'Use Image / Run OCR'}
+            </button>
+          </div>
+        ) : (
+          <button type="button" className="ocr-read-btn" onClick={handleCaptureLabel} disabled={readDisabled}>
+            Capture
+          </button>
+        )}
         {hasText ? (
           <div className="ocr-result-panel">
-            <p className="ocr-result-label">Extracted text</p>
-            <p className="ocr-result-text">{ocrText}</p>
+            <label className="ocr-result-label" htmlFor="ocr-extracted-text">
+              Extracted text
+            </label>
+            <textarea
+              id="ocr-extracted-text"
+              className="ocr-result-text"
+              value={ocrText}
+              onChange={(event) => setOcrText(event.target.value)}
+              rows={3}
+            />
             <div className="ocr-target-choice" role="group" aria-label="OCR target field">
               {(Object.keys(OCR_APPLY_TARGET_LABELS) as OcrApplyTarget[]).map((target) => (
                 <button
