@@ -788,6 +788,7 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
   } | null>(null);
   const [detailsScanTarget, setDetailsScanTarget] = useState<DetailsScanTarget | null>(null);
   const [detailsScanMode, setDetailsScanMode] = useState<DetailsScanMode>('barcode');
+  const [detailsScanChoiceTarget, setDetailsScanChoiceTarget] = useState<DetailsScanTarget | null>(null);
   const [ocrLabelReaderTarget, setOcrLabelReaderTarget] = useState<OcrApplyTarget | null>(null);
   const [detailsDraft, setDetailsDraft] = useState<{
     deviceType: DeviceType;
@@ -2001,6 +2002,7 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
       return;
     }
     setDetailsScanTarget(null);
+    setDetailsScanChoiceTarget(null);
     setOcrLabelReaderTarget(null);
     if (detailsModal.mode === 'create') {
       handleDeleteBlock(detailsModal.blockId);
@@ -2017,16 +2019,33 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
     setDetailsDraft((draft) => ({ ...draft, [target]: value }));
     setDetailsScanTarget(null);
     setDetailsScanMode('barcode');
+    setDetailsScanChoiceTarget(null);
   }, [detailsScanTarget]);
 
   const openDetailsScanner = (target: DetailsScanTarget, mode: DetailsScanMode) => {
+    setDetailsScanChoiceTarget(null);
     setDetailsScanMode(mode);
     setDetailsScanTarget(target);
+  };
+
+  const handleScanChoice = (choice: DetailsScanMode | 'ocr') => {
+    if (!detailsScanChoiceTarget) {
+      return;
+    }
+
+    const target = detailsScanChoiceTarget;
+    setDetailsScanChoiceTarget(null);
+    if (choice === 'ocr') {
+      setOcrLabelReaderTarget(target);
+      return;
+    }
+    openDetailsScanner(target, choice);
   };
 
   const handleOcrApply = useCallback((target: OcrApplyTarget, value: string) => {
     setDetailsDraft((draft) => ({ ...draft, [target]: value }));
     setOcrLabelReaderTarget(null);
+    setDetailsScanChoiceTarget(null);
   }, []);
 
   handleDetailsCancelRef.current = handleDetailsCancel;
@@ -2036,6 +2055,7 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
       detailsModalPointerDownStartedInsideRef.current = false;
     } else {
       setDetailsScanTarget(null);
+      setDetailsScanChoiceTarget(null);
       setOcrLabelReaderTarget(null);
     }
   }, [detailsModal]);
@@ -3391,23 +3411,9 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
                         <button
                           type="button"
                           className="scan-field-btn"
-                          onClick={() => openDetailsScanner('serialNumber', 'barcode')}
+                          onClick={() => setDetailsScanChoiceTarget('serialNumber')}
                         >
                           Scan
-                        </button>
-                        <button
-                          type="button"
-                          className="scan-field-btn"
-                          onClick={() => openDetailsScanner('serialNumber', 'qr')}
-                        >
-                          QR
-                        </button>
-                        <button
-                          type="button"
-                          className="ocr-field-btn"
-                          onClick={() => setOcrLabelReaderTarget('serialNumber')}
-                        >
-                          Read Label
                         </button>
                       </div>
                     </label>
@@ -3425,23 +3431,9 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
                         <button
                           type="button"
                           className="scan-field-btn"
-                          onClick={() => openDetailsScanner('macAddress', 'barcode')}
+                          onClick={() => setDetailsScanChoiceTarget('macAddress')}
                         >
                           Scan
-                        </button>
-                        <button
-                          type="button"
-                          className="scan-field-btn"
-                          onClick={() => openDetailsScanner('macAddress', 'qr')}
-                        >
-                          QR
-                        </button>
-                        <button
-                          type="button"
-                          className="ocr-field-btn"
-                          onClick={() => setOcrLabelReaderTarget('macAddress')}
-                        >
-                          Read Label
                         </button>
                       </div>
                     </label>
@@ -3459,23 +3451,9 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
                         <button
                           type="button"
                           className="scan-field-btn"
-                          onClick={() => openDetailsScanner('assetTag', 'barcode')}
+                          onClick={() => setDetailsScanChoiceTarget('assetTag')}
                         >
                           Scan
-                        </button>
-                        <button
-                          type="button"
-                          className="scan-field-btn"
-                          onClick={() => openDetailsScanner('assetTag', 'qr')}
-                        >
-                          QR
-                        </button>
-                        <button
-                          type="button"
-                          className="ocr-field-btn"
-                          onClick={() => setOcrLabelReaderTarget('assetTag')}
-                        >
-                          Read Label
                         </button>
                       </div>
                     </label>
@@ -3520,6 +3498,40 @@ export const RackBuilder = forwardRef<RackBuilderHandle, RackBuilderProps>(funct
           </div>
         </div>
       )}
+      {detailsScanChoiceTarget ? (
+        <div className="scan-choice-backdrop" role="presentation" onClick={() => setDetailsScanChoiceTarget(null)}>
+          <div
+            className="scan-choice-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="scan-choice-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="scan-choice-header">
+              <h2 id="scan-choice-title" className="scan-choice-title">
+                Scan {DETAILS_SCAN_TARGET_LABELS[detailsScanChoiceTarget]}
+              </h2>
+              <button type="button" className="scan-choice-close" onClick={() => setDetailsScanChoiceTarget(null)}>
+                Close
+              </button>
+            </div>
+            <div className="scan-choice-options">
+              <button type="button" className="scan-choice-option" onClick={() => handleScanChoice('barcode')}>
+                <span>Barcode</span>
+                <small>Wide scan target for linear codes</small>
+              </button>
+              <button type="button" className="scan-choice-option" onClick={() => handleScanChoice('qr')}>
+                <span>QR Code</span>
+                <small>Square scan target for QR labels</small>
+              </button>
+              <button type="button" className="scan-choice-option" onClick={() => handleScanChoice('ocr')}>
+                <span>Read Label</span>
+                <small>Capture printed text with OCR</small>
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {detailsScanTarget ? (
         <BarcodeScannerModal
           title={`${detailsScanMode === 'qr' ? 'Scan QR for' : 'Scan'} ${DETAILS_SCAN_TARGET_LABELS[detailsScanTarget]}`}
